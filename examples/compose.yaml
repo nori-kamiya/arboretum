@@ -1,0 +1,42 @@
+name: demo
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:3000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://db:5432/app
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1"
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  redis:
+    image: redis:7
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+volumes:
+  dbdata:
