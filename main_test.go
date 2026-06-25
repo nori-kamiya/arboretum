@@ -86,6 +86,47 @@ func TestLogs_DryRun(t *testing.T) {
 	}
 }
 
+func TestExec_DryRun(t *testing.T) {
+	code, out, errOut := runCLI("exec", "--dry-run", "-f", composeFile, "db", "psql", "-U", "postgres")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "container exec --tty --interactive db psql -U postgres") {
+		t.Fatalf("exec output = %q", out)
+	}
+}
+
+func TestExec_DryRun_WithFlags(t *testing.T) {
+	code, out, errOut := runCLI("exec", "--dry-run", "-f", composeFile,
+		"-d", "-T", "-e", "K=V", "-w", "/app", "-u", "root", "db", "sh")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "container exec --detach --env K=V --workdir /app --user root db sh") {
+		t.Fatalf("exec output = %q", out)
+	}
+}
+
+func TestExec_MissingArgs(t *testing.T) {
+	code, _, errOut := runCLI("exec", "--dry-run", "-f", composeFile, "db")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (needs SERVICE + COMMAND)", code)
+	}
+	if !strings.Contains(errOut, "orchard:") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+}
+
+func TestExec_LoadError(t *testing.T) {
+	code, _, errOut := runCLI("exec", "--dry-run", "-f", "no-such-file.yaml", "db", "sh")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(errOut, "orchard:") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+}
+
 func TestEachCommand_LoadError(t *testing.T) {
 	for _, sub := range []string{"up", "down", "ps", "logs"} {
 		code, _, errOut := runCLI(sub, "--dry-run", "-f", "no-such-file.yaml")

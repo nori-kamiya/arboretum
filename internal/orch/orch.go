@@ -95,6 +95,47 @@ func Logs(ctx context.Context, p *types.Project, follow bool) error {
 	return nil
 }
 
+// ExecOptions controls how Exec attaches to a running service container,
+// mirroring the relevant `docker compose exec` flags.
+type ExecOptions struct {
+	Detach  bool     // -d: run the command in the background
+	NoTTY   bool     // -T: do not allocate a pseudo-TTY
+	Env     []string // -e KEY=VALUE (repeatable)
+	Workdir string   // -w: working directory inside the container
+	User    string   // -u: user[:group] to run as
+}
+
+// Exec runs a one-off command in a service's already-running container via
+// `container exec`. By default it allocates an interactive TTY (compose-style);
+// pass NoTTY to disable it.
+func Exec(ctx context.Context, p *types.Project, service string, opts ExecOptions, cmd ...string) error {
+	if _, ok := p.Services[service]; !ok {
+		return fmt.Errorf("no such service: %s", service)
+	}
+	if len(cmd) == 0 {
+		return fmt.Errorf("exec requires a command to run")
+	}
+	args := []string{"exec"}
+	if opts.Detach {
+		args = append(args, "--detach")
+	}
+	if !opts.NoTTY {
+		args = append(args, "--tty", "--interactive")
+	}
+	for _, e := range opts.Env {
+		args = append(args, "--env", e)
+	}
+	if opts.Workdir != "" {
+		args = append(args, "--workdir", opts.Workdir)
+	}
+	if opts.User != "" {
+		args = append(args, "--user", opts.User)
+	}
+	args = append(args, containerName(p, service))
+	args = append(args, cmd...)
+	return backend.Run(ctx, args...)
+}
+
 func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error {
 	args := []string{"build", "-t", imageRef(p, svc)}
 	if svc.Build.Dockerfile != "" {
@@ -124,6 +165,18 @@ func runArgs(p *types.Project, svc types.ServiceConfig) []string {
 	if c := cpuLimit(svc); c != "" {
 		a = append(a, "--cpus", c)
 	}
+	if svc.WorkingDir != "" {
+		a = append(a, "--workdir", svc.WorkingDir)
+	}
+	if svc.User != "" {
+		a = append(a, "--user", svc.User)
+	}
+	if len(svc.Entrypoint) > 0 {
+		a = append(a, "--entrypoint", svc.Entrypoint[0])
+	}
+	for _, k := range sortedKeys(svc.Labels) {
+		a = append(a, "--label", k+"="+svc.Labels[k])
+	}
 	for _, k := range sortedEnvKeys(svc.Environment) {
 		if v := svc.Environment[k]; v != nil {
 			a = append(a, "--env", k+"="+*v)
@@ -142,6 +195,11 @@ func runArgs(p *types.Project, svc types.ServiceConfig) []string {
 		}
 	}
 	a = append(a, imageRef(p, svc))
+	if len(svc.Entrypoint) > 1 {
+		// container's --entrypoint takes a single executable; the rest of a
+		// compose entrypoint list becomes leading arguments.
+		a = append(a, svc.Entrypoint[1:]...)
+	}
 	a = append(a, svc.Command...)
 	return a
 }

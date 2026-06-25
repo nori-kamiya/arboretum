@@ -113,6 +113,35 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	}
 	logs.Flags().Bool("follow", false, "follow log output") // no -f: reserved for --file
 
-	root.AddCommand(up, down, ps, logs)
+	exec := &cobra.Command{
+		Use:   "exec [flags] SERVICE COMMAND [ARG...]",
+		Short: "Run a command in a running service container",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := orch.ExecOptions{}
+			opts.Detach, _ = cmd.Flags().GetBool("detach")
+			opts.NoTTY, _ = cmd.Flags().GetBool("no-TTY")
+			opts.Env, _ = cmd.Flags().GetStringArray("env")
+			opts.Workdir, _ = cmd.Flags().GetString("workdir")
+			opts.User, _ = cmd.Flags().GetString("user")
+			p, err := load(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return orch.Exec(cmd.Context(), p, args[0], opts, args[1:]...)
+		},
+	}
+	// Stop flag parsing at the first positional (the service name) so flags that
+	// belong to the executed command (e.g. `exec db psql -U postgres`) pass
+	// through untouched instead of being claimed by orchard.
+	exec.Flags().SetInterspersed(false)
+	ef := exec.Flags()
+	ef.BoolP("detach", "d", false, "run the command in the background")
+	ef.BoolP("no-TTY", "T", false, "disable pseudo-TTY allocation")
+	ef.StringArrayP("env", "e", nil, "set environment variables (repeatable)")
+	ef.StringP("workdir", "w", "", "working directory inside the container")
+	ef.StringP("user", "u", "", "run as the given user[:group]")
+
+	root.AddCommand(up, down, ps, logs, exec)
 	return root
 }

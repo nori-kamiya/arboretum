@@ -1,6 +1,6 @@
 # orchard — Status & Resume Notes
 
-Last updated: 2026-06-24. Read this first when resuming.
+Last updated: 2026-06-25. Read this first when resuming.
 
 ## What this is
 
@@ -9,14 +9,17 @@ lightweight VM per container, per-service memory/CPU limits). Built because
 colima reserves a fixed VM (4 GiB) for its whole lifetime; Apple `container`
 sizes per service and frees memory on stop. See `README.md` for the pitch.
 
-## Current state (Phase 1 / MVP — DONE)
+## Current state (Phase 1 / MVP — DONE; Phase 2 in progress)
 
-- Commands: `up` (`-d`), `down`, `ps`, `logs` (`--follow`).
+- Commands: `up` (`-d`), `down`, `ps`, `logs` (`--follow`), `exec`
+  (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via non-interspersed flags).
 - Compose features translated: `image`, `build` (context + dockerfile),
   `environment`, `ports`, `volumes` (+ named volumes pre-created), `networks`
-  (single per-project network), `depends_on` (topological start order), and
+  (single per-project network), `depends_on` (topological start order),
   resource limits (`deploy.resources.limits.memory/cpus` and legacy
-  `mem_limit`/`cpus`) → `container run --memory/--cpus`.
+  `mem_limit`/`cpus`) → `container run --memory/--cpus`, plus `working_dir`
+  → `--workdir`, `user` → `--user`, user `labels` → `--label`, and
+  `entrypoint` (`[0]` → `--entrypoint`, rest prepended to the command).
 - `--dry-run` prints the exact `container` commands (used as the acceptance
   oracle in tests). Verified output for `examples/compose.yaml`.
 - **Tests: TDD/BDD, 100% statement coverage across all packages, `go vet` clean.**
@@ -55,12 +58,16 @@ Priority order:
      `backend.extractLabels`/`firstString`.
    - Service-name DNS actually resolving between containers on the project net.
    - `--memory 512m` / `--cpus 0.5` unit acceptance.
+   - New `run` flags: `--workdir`, `--user`, `--entrypoint`, `--label`.
+   - `exec` flag names: `--tty` / `--interactive` (vs a combined `-it`).
 2. **Foreground `up` log multiplexing** — interleave `container logs -f` per
    service with colored `name |` prefixes; Ctrl-C → stop all. (Currently Logs
    tails services sequentially — see `orch.Logs` TODO.)
 3. **`depends_on` healthcheck conditions** (`condition: service_healthy`) — poll
    `container inspect`/exec until healthy before starting dependents.
-4. **`exec`** subcommand (`container exec -it`).
+4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty
+   --interactive` by default, `-T` to disable). Verify `--tty`/`--interactive`
+   flag names against the real `container exec` during item 1.
 5. **Cross-project safety** — optional name prefixing + `--network-alias` once we
    confirm alias support, removing the one-project-at-a-time caveat.
 6. profiles, `restart` policy, `compose.override.yaml`.

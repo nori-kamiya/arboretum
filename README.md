@@ -16,6 +16,9 @@ Phase 1 (MVP): `up` / `down` / `ps` / `logs`, covering image & build services,
 networks, named volumes, env, ports, `depends_on` ordering and **resource
 limits** (`deploy.resources.limits` / `mem_limit` / `cpus`).
 
+Phase 2 (in progress): `exec`, plus `working_dir` / `user` / `entrypoint` /
+service `labels` translation. See `docs/STATUS.md` for the roadmap.
+
 Use `--dry-run` to print the exact `container` commands without executing them:
 
 ```sh
@@ -33,6 +36,7 @@ orchard up --dry-run -f examples/compose.yaml
 orchard up -d            # build, create network/volumes, start in dep order
 orchard ps               # list this project's containers
 orchard logs --follow    # tail logs
+orchard exec db psql     # run a command in a running service container
 orchard down             # stop + remove containers and the network
 ```
 
@@ -66,8 +70,10 @@ These are translated but not yet validated on hardware (tracked for phase 2):
   Apple's embedded DNS resolves short names. Assumes one project at a time;
   cross-project name collisions are a known limitation.
 - **`--memory` / `--cpus` units** — emitted as `512m` / `0.5`; confirm accepted.
+- **New `run`/`exec` flags** (`--workdir`, `--user`, `--entrypoint`, `--label`,
+  `exec --tty --interactive`) — translated but not yet validated on hardware.
 - Foreground `up` log multiplexing, `depends_on` healthcheck conditions,
-  `exec`, profiles, restart policies — phase 2+.
+  profiles, restart policies — phase 2+.
 
 ## Nix
 

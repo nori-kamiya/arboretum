@@ -130,6 +130,83 @@ func TestRunArgs_FullService(t *testing.T) {
 	}
 }
 
+func TestRunArgs_WorkdirUserEntrypointLabels(t *testing.T) {
+	p := &types.Project{Name: "demo"}
+	svc := types.ServiceConfig{
+		Name:       "api",
+		Image:      "myapi:latest",
+		WorkingDir: "/srv",
+		User:       "node",
+		Entrypoint: types.ShellCommand{"./entry.sh", "--flag", "x"},
+		Labels:     types.Labels{"com.example.tier": "web", "com.example.team": "core"},
+		Command:    types.ShellCommand{"start"},
+	}
+	got := strings.Join(runArgs(p, svc), " ")
+	want := "run --detach --name api --network demo_default " +
+		"--label orchard.project=demo --label orchard.service=api " +
+		"--workdir /srv --user node --entrypoint ./entry.sh " +
+		"--label com.example.team=core --label com.example.tier=web " +
+		"myapi:latest --flag x start"
+	if got != want {
+		t.Fatalf("runArgs mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// --- Exec ------------------------------------------------------------------
+
+func TestExec_DefaultAllocatesTTY(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	out := captureDryRun(t, func() error {
+		return Exec(context.Background(), p, "db", ExecOptions{}, "psql", "-U", "postgres")
+	})
+	if strings.TrimSpace(out) != "container exec --tty --interactive db psql -U postgres" {
+		t.Fatalf("exec cmd = %q", out)
+	}
+}
+
+func TestExec_AllOptions(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	out := captureDryRun(t, func() error {
+		return Exec(context.Background(), p, "db", ExecOptions{
+			Detach:  true,
+			NoTTY:   true,
+			Env:     []string{"A=1", "B=2"},
+			Workdir: "/tmp",
+			User:    "root",
+		}, "sh", "-c", "echo hi")
+	})
+	want := "container exec --detach --env A=1 --env B=2 --workdir /tmp --user root db sh -c echo hi"
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("exec cmd = %q", out)
+	}
+}
+
+func TestExec_UnknownService(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	if err := Exec(context.Background(), p, "ghost", ExecOptions{}, "sh"); err == nil {
+		t.Fatal("expected error for unknown service")
+	}
+}
+
+func TestExec_NoCommand(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	if err := Exec(context.Background(), p, "db", ExecOptions{}); err == nil {
+		t.Fatal("expected error when no command given")
+	}
+}
+
+func TestExec_RunErrorPropagates(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("no such container")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	if err := Exec(context.Background(), p, "db", ExecOptions{}, "sh"); err == nil {
+		t.Fatal("expected exec error")
+	}
+}
+
 // --- topoSort --------------------------------------------------------------
 
 func dep(names ...string) types.DependsOnConfig {
