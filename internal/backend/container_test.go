@@ -129,6 +129,39 @@ func TestAsExitError_FalseForPlainError(t *testing.T) {
 	}
 }
 
+func TestEnsureInstalled_DryRunSkips(t *testing.T) {
+	DryRun = true
+	Bin = "orchard-no-such-binary-zzz"
+	t.Cleanup(func() { DryRun = false; Bin = "container" })
+	if err := EnsureInstalled(); err != nil {
+		t.Fatalf("dry-run should skip the check, got %v", err)
+	}
+}
+
+func TestEnsureInstalled_PresentBinary(t *testing.T) {
+	Bin = makeStub(t, "exit 0\n") // a real, executable path
+	t.Cleanup(func() { Bin = "container" })
+	if err := EnsureInstalled(); err != nil {
+		t.Fatalf("present binary should pass, got %v", err)
+	}
+}
+
+func TestEnsureInstalled_MissingBinaryGuides(t *testing.T) {
+	Bin = "orchard-no-such-binary-zzz"
+	t.Cleanup(func() { Bin = "container" })
+	err := EnsureInstalled()
+	var ni *NotInstalledError
+	if !errors.As(err, &ni) {
+		t.Fatalf("want *NotInstalledError, got %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"not installed", "github.com/apple/container", "system start"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("guidance missing %q in:\n%s", want, msg)
+		}
+	}
+}
+
 func TestListByProject_FiltersByLabel_MapForm(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
 		return []byte(`[

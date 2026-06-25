@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/nori-kamiya/orchard/internal/backend"
 )
 
 const composeFile = "examples/compose.yaml"
@@ -136,6 +138,42 @@ func TestEachCommand_LoadError(t *testing.T) {
 		if !strings.Contains(errOut, "orchard:") {
 			t.Errorf("%s: stderr = %q", sub, errOut)
 		}
+	}
+}
+
+// Feature: friendly guidance when Apple `container` is not installed.
+//
+//	Given the container CLI is missing from PATH
+//	When the user runs a real (non-dry-run) command
+//	Then orchard fails fast and tells them how to install it.
+func TestPreflight_GuidesWhenContainerMissing(t *testing.T) {
+	oldBin := backend.Bin
+	backend.Bin = "orchard-no-such-binary-zzz"
+	t.Cleanup(func() { backend.Bin = oldBin; backend.DryRun = false })
+
+	code, _, errOut := runCLI("up", "-f", composeFile) // note: no --dry-run
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	for _, want := range []string{"orchard:", "not installed", "github.com/apple/container"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+// Dry-run must still work without `container` installed (the check is skipped).
+func TestPreflight_DryRunWorksWithoutContainer(t *testing.T) {
+	oldBin := backend.Bin
+	backend.Bin = "orchard-no-such-binary-zzz"
+	t.Cleanup(func() { backend.Bin = oldBin; backend.DryRun = false })
+
+	code, out, errOut := runCLI("up", "--dry-run", "-f", composeFile)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "run --detach --name db") {
+		t.Fatalf("dry-run output = %q", out)
 	}
 }
 

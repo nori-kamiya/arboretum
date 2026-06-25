@@ -29,6 +29,8 @@ orchard up --dry-run -f examples/compose.yaml
 
 - macOS 26 (Tahoe) for full container-to-container networking / DNS.
 - Apple `container` installed (`container` on PATH). orchard never needs Docker.
+  If it is missing, orchard prints step-by-step install guidance (and `--dry-run`
+  works without it).
 
 ## Usage
 

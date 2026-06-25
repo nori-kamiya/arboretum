@@ -84,6 +84,36 @@ func Output(ctx context.Context, args ...string) ([]byte, error) {
 	return execFn(ctx, false, args...)
 }
 
+// NotInstalledError is returned by EnsureInstalled when the container CLI is
+// missing from PATH. Its message walks the user through installing it.
+type NotInstalledError struct{ Bin string }
+
+func (e *NotInstalledError) Error() string {
+	b := e.Bin
+	return "Apple `" + b + "` is not installed (not found on PATH).\n\n" +
+		"orchard drives Apple's container runtime, so it must be installed first:\n\n" +
+		"  1. Requires macOS 26 (Tahoe) or later on Apple silicon.\n" +
+		"  2. Install the latest release:\n" +
+		"       - download the signed .pkg from\n" +
+		"         https://github.com/apple/container/releases\n" +
+		"       - or, with Homebrew:  brew install --cask container\n" +
+		"  3. Start the runtime once:  " + b + " system start\n\n" +
+		"Then re-run your command. To preview commands without a runtime, add --dry-run."
+}
+
+// EnsureInstalled verifies the container CLI is reachable on PATH, returning a
+// guidance-bearing *NotInstalledError otherwise. It is a no-op under DryRun so
+// the translation layer can be exercised without a runtime installed.
+func EnsureInstalled() error {
+	if DryRun {
+		return nil
+	}
+	if _, err := exec.LookPath(Bin); err != nil {
+		return &NotInstalledError{Bin: Bin}
+	}
+	return nil
+}
+
 // Container is a tolerant view over an item of `container ls --format json`.
 // The exact schema of Apple container's JSON output still needs to be pinned
 // against a real install (see README "未検証"); we therefore parse defensively.

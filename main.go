@@ -47,6 +47,11 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	load := func(ctx context.Context) (*types.Project, error) {
 		backend.DryRun = dryRun
 		backend.Stdout = out
+		// Fail fast with install guidance when the runtime is absent (a no-op
+		// under --dry-run, so previews still work without `container`).
+		if err := backend.EnsureInstalled(); err != nil {
+			return nil, err
+		}
 		return compose.Load(ctx, files, projectName)
 	}
 

@@ -20,6 +20,10 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
   `mem_limit`/`cpus`) → `container run --memory/--cpus`, plus `working_dir`
   → `--workdir`, `user` → `--user`, user `labels` → `--label`, and
   `entrypoint` (`[0]` → `--entrypoint`, rest prepended to the command).
+- **Preflight**: real (non-dry-run) commands check `container` is on PATH first
+  (`backend.EnsureInstalled`) and, when missing, fail fast with a
+  `*NotInstalledError` that walks the user through installing the runtime.
+  `--dry-run` skips the check so previews work without a runtime.
 - `--dry-run` prints the exact `container` commands (used as the acceptance
   oracle in tests). Verified output for `examples/compose.yaml`.
 - **Tests: TDD/BDD, 100% statement coverage across all packages, `go vet` clean.**
