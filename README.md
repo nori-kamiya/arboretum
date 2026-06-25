@@ -32,6 +32,38 @@ orchard up --dry-run -f examples/compose.yaml
   If it is missing, orchard prints step-by-step install guidance (and `--dry-run`
   works without it).
 
+## Install
+
+### Script (latest release)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nori-kamiya/orchard/main/install.sh | sh
+```
+
+Installs into `~/.local/bin` (override with `BINDIR=...`) and verifies the
+release checksum.
+
+### Manual download
+
+Grab the archive for your Mac from the
+[releases page](https://github.com/nori-kamiya/orchard/releases), then:
+
+```sh
+tar -xzf orchard_*_darwin_arm64.tar.gz
+xattr -d com.apple.quarantine ./orchard   # binaries are not notarized yet
+sudo mv orchard /usr/local/bin/
+```
+
+### From source
+
+```sh
+go install github.com/nori-kamiya/orchard@latest   # needs Go 1.26+
+# or, from a clone, with version metadata baked in:
+make install
+```
+
+Verify with `orchard version`.
+
 ## Usage
 
 ```sh
@@ -62,6 +94,29 @@ Layout:
 
 Testability seams (vars, swapped in tests): `backend.Bin`, `backend.DryRun`,
 `backend.Stdout`, `backend.SetExecForTest`, `osExit`.
+
+Common tasks live in the `Makefile` (`make build`, `make cover`, `make snapshot`).
+
+## Releasing
+
+Releases are cut by [GoReleaser](https://goreleaser.com) and GitHub Actions:
+
+1. Land your changes on `main` (CI enforces `go vet` + the 100% coverage gate).
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+3. `.github/workflows/release.yml` runs `goreleaser release --clean`, which
+   cross-compiles the macOS `arm64`/`amd64` binaries, generates checksums and a
+   changelog, and publishes a GitHub Release — all with the default
+   `GITHUB_TOKEN`, no extra secrets.
+
+Dry-run the whole pipeline locally first: `make snapshot` (writes `./dist`,
+uploads nothing). Validate the config with `make release-check`.
+
+Optional Homebrew tap publishing (`brew install nori-kamiya/tap/orchard`) is
+pre-wired but commented out in `.goreleaser.yaml`; enable it once you've created
+a `homebrew-tap` repo and a `HOMEBREW_TAP_GITHUB_TOKEN` secret.
+
+> **Note:** a `LICENSE` file isn't in the repo yet — add one before a public
+> release (Homebrew formulae and most downstreams expect it).
 
 ## Known gaps / to verify against a real install
 

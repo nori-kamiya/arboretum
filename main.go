@@ -19,6 +19,14 @@ import (
 // osExit is a seam so main() can be covered in tests.
 var osExit = os.Exit
 
+// Build metadata. Overridden at release time via -ldflags
+// (see .goreleaser.yaml / Makefile); "dev" for local builds.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	osExit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -58,6 +66,7 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "orchard",
 		Short:         "docker-compose, backed by Apple's container runtime",
+		Version:       version, // enables `orchard --version`
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -147,6 +156,15 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	ef.StringP("workdir", "w", "", "working directory inside the container")
 	ef.StringP("user", "u", "", "run as the given user[:group]")
 
-	root.AddCommand(up, down, ps, logs, exec)
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print detailed version information",
+		RunE: func(*cobra.Command, []string) error {
+			fmt.Fprintf(out, "orchard %s (commit %s, built %s)\n", version, commit, date)
+			return nil
+		},
+	}
+
+	root.AddCommand(up, down, ps, logs, exec, versionCmd)
 	return root
 }

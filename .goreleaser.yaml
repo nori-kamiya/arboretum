@@ -1,0 +1,89 @@
+# GoReleaser config for orchard. Build & publish with:
+#   goreleaser release --snapshot --clean   # local dry-run, no upload
+#   git tag v0.1.0 && git push --tags        # CI (.github/workflows/release.yml) publishes
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: orchard
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: orchard
+    main: .
+    binary: orchard
+    env:
+      - CGO_ENABLED=0 # pure Go, so darwin binaries cross-compile from any host
+    goos:
+      - darwin
+    goarch:
+      # Apple `container` runs only on Apple silicon; arm64 is the target that
+      # matters. amd64 is built so the CLI/--dry-run works on Intel Macs too.
+      - arm64
+      - amd64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: orchard
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - docs/*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: nori-kamiya
+    name: orchard
+  draft: false
+  prerelease: auto
+  header: |
+    orchard {{ .Tag }} — docker-compose, backed by Apple's `container`.
+
+    Requires macOS 26 (Tahoe) on Apple silicon with Apple `container` installed.
+    The binaries are **not notarized**; on first run clear the quarantine flag:
+    `xattr -d com.apple.quarantine ./orchard`.
+
+# Homebrew tap publishing. Opt-in: uncomment after you have
+#   1. created the repo  github.com/nori-kamiya/homebrew-tap
+#   2. added a HOMEBREW_TAP_GITHUB_TOKEN secret (PAT with `repo` scope) and wired
+#      it into the release workflow's env.
+# Then users can `brew install nori-kamiya/tap/orchard`.
+#
+# brews:
+#   - name: orchard
+#     repository:
+#       owner: nori-kamiya
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+#     homepage: "https://github.com/nori-kamiya/orchard"
+#     description: "docker-compose, backed by Apple's container runtime"
+#     license: "MIT"
+#     skip_upload: auto
+#     install: |
+#       bin.install "orchard"
+#     test: |
+#       system "#{bin}/orchard", "version"

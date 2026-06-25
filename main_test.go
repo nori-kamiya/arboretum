@@ -177,6 +177,26 @@ func TestPreflight_DryRunWorksWithoutContainer(t *testing.T) {
 	}
 }
 
+func TestVersion_Command(t *testing.T) {
+	code, out, errOut := runCLI("version")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "orchard dev (commit none, built unknown)") {
+		t.Fatalf("version output = %q", out)
+	}
+}
+
+func TestVersion_Flag(t *testing.T) {
+	code, out, errOut := runCLI("--version")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "orchard version dev") {
+		t.Fatalf("--version output = %q", out)
+	}
+}
+
 func TestMain_WiringCoversEntrypoint(t *testing.T) {
 	var code int
 	oldExit, oldArgs := osExit, os.Args

@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - run: go vet ./...
+
+      - name: Test with 100% coverage gate
+        run: |
+          go test ./... -coverpkg=./... -coverprofile=cover.out
+          pct=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}')
+          echo "total statement coverage: $pct"
+          if [ "$pct" != "100.0%" ]; then
+            echo "::error::coverage $pct is below the required 100.0%"
+            exit 1
+          fi
+
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check

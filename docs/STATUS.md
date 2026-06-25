@@ -27,6 +27,14 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
 - `--dry-run` prints the exact `container` commands (used as the acceptance
   oracle in tests). Verified output for `examples/compose.yaml`.
 - **Tests: TDD/BDD, 100% statement coverage across all packages, `go vet` clean.**
+- **Distribution**: `version`/`--version` (ldflags-injected metadata), GoReleaser
+  (`.goreleaser.yaml`, darwin arm64+amd64 archives + checksums), GitHub Actions
+  (`ci.yml` = vet + 100% coverage gate + `goreleaser check`; `release.yml` =
+  publish on `v*` tag with the default token), `Makefile`, and `install.sh`.
+  Verified end-to-end locally via `goreleaser release --snapshot` (produces a
+  working arm64 binary with version baked in). Releasing steps in README.
+  Open item before a public release: add a `LICENSE` file (and then the
+  Homebrew tap block in `.goreleaser.yaml` can be enabled).
 
 Sanity check after pulling:
 
