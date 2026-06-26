@@ -84,6 +84,34 @@ func Output(ctx context.Context, args ...string) ([]byte, error) {
 	return execFn(ctx, false, args...)
 }
 
+// streamFn is the seam for Stream; tests swap it to avoid real processes.
+var streamFn = streamExec
+
+// SetStreamForTest swaps the streaming seam and returns a restore function.
+func SetStreamForTest(fn func(ctx context.Context, w io.Writer, args ...string) error) func() {
+	prev := streamFn
+	streamFn = fn
+	return func() { streamFn = prev }
+}
+
+func streamExec(ctx context.Context, w io.Writer, args ...string) error {
+	cmd := exec.CommandContext(ctx, Bin, args...)
+	cmd.Stdout = w
+	cmd.Stderr = w
+	return cmd.Run()
+}
+
+// Stream runs `container <args>`, writing combined stdout+stderr to w as it
+// arrives (used for `logs -f` multiplexing). Under DryRun it echoes the command
+// like Run and writes nothing through w.
+func Stream(ctx context.Context, w io.Writer, args ...string) error {
+	if DryRun {
+		fmt.Fprintln(Stdout, Bin, strings.Join(args, " "))
+		return nil
+	}
+	return streamFn(ctx, w, args...)
+}
+
 // NotInstalledError is returned by EnsureInstalled when the container CLI is
 // missing from PATH. Its message walks the user through installing it.
 type NotInstalledError struct{ Bin string }

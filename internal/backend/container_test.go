@@ -4,11 +4,52 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestStream_DryRunEchoes(t *testing.T) {
+	var buf bytes.Buffer
+	DryRun, Stdout = true, &buf
+	t.Cleanup(func() { DryRun, Stdout = false, os.Stdout })
+	if err := Stream(context.Background(), io.Discard, "logs", "-f", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "container logs -f x\n" {
+		t.Fatalf("echo = %q", got)
+	}
+}
+
+func TestStream_RealWritesOutput(t *testing.T) {
+	Bin = makeStub(t, "printf 'a\\nb\\n'\n")
+	t.Cleanup(func() { Bin = "container" })
+	var buf bytes.Buffer
+	if err := Stream(context.Background(), &buf, "logs"); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "a\nb\n" {
+		t.Fatalf("stream output = %q", buf.String())
+	}
+}
+
+func TestStream_SeamCalledAndErrorPropagates(t *testing.T) {
+	var gotArgs []string
+	t.Cleanup(SetStreamForTest(func(_ context.Context, w io.Writer, args ...string) error {
+		gotArgs = args
+		_, _ = io.WriteString(w, "hi")
+		return errors.New("boom")
+	}))
+	var buf bytes.Buffer
+	if err := Stream(context.Background(), &buf, "logs", "-f", "db"); err == nil {
+		t.Fatal("expected error")
+	}
+	if buf.String() != "hi" || strings.Join(gotArgs, " ") != "logs -f db" {
+		t.Fatalf("buf=%q args=%v", buf.String(), gotArgs)
+	}
+}
 
 // swapExec replaces the exec seam for the duration of a test.
 func swapExec(t *testing.T, fn func(ctx context.Context, stream bool, args ...string) ([]byte, error)) {

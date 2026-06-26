@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/nori-kamiya/orchard/internal/backend"
@@ -34,11 +35,16 @@ func main() {
 // run wires up the CLI and returns a process exit code. Extracted from main so
 // it can be exercised end-to-end in tests.
 func run(args []string, out, errOut io.Writer) int {
+	// Ctrl-C cancels the command context so foreground `logs -f` (and the
+	// container child processes started via exec.CommandContext) shut down.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	root := newRootCmd(out)
 	root.SetArgs(args)
 	root.SetOut(out)
 	root.SetErr(errOut)
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(errOut, "orchard:", err)
 		return 1
 	}

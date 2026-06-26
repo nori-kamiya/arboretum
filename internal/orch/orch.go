@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/nori-kamiya/orchard/internal/backend"
@@ -105,21 +106,111 @@ func Ps(ctx context.Context, p *types.Project, out io.Writer) error {
 	return nil
 }
 
-// Logs follows logs for each service. Apple's `container logs -f` attaches to a
-// single container, so for now we follow them sequentially; multiplexing with
-// colored prefixes is a phase-2 item (see README).
+// LogColor toggles ANSI coloring of per-service log prefixes. Tests disable it
+// for deterministic output.
+var LogColor = true
+
+var logColors = []string{"36", "32", "33", "35", "34", "31", "96", "92"}
+
+// Logs streams each service's logs with a "name | " prefix. With follow, every
+// service's `container logs -f` runs concurrently and their lines are
+// interleaved (Ctrl-C cancels ctx, which kills the children). Without follow —
+// and always under dry-run, to keep output deterministic — services are printed
+// sequentially.
 func Logs(ctx context.Context, p *types.Project, follow bool) error {
-	for _, name := range sortedServiceNames(p) {
-		args := []string{"logs"}
-		if follow {
-			args = append(args, "-f")
+	names := sortedServiceNames(p)
+	width := 0
+	for _, n := range names {
+		if len(n) > width {
+			width = len(n)
 		}
-		args = append(args, containerName(p, name))
-		if err := backend.Run(ctx, args...); err != nil {
+	}
+	out := &syncWriter{w: backend.Stdout}
+
+	if !follow || backend.DryRun {
+		for i, name := range names {
+			if err := streamLogs(ctx, p, name, i, width, follow, out); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(names))
+	for i, name := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- streamLogs(ctx, p, name, i, width, true, out)
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		// Ignore errors caused by our own cancellation (Ctrl-C).
+		if err != nil && ctx.Err() == nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func streamLogs(ctx context.Context, p *types.Project, name string, idx, width int, follow bool, out io.Writer) error {
+	w := &prefixWriter{w: out, prefix: logPrefix(name, idx, width)}
+	args := []string{"logs"}
+	if follow {
+		args = append(args, "-f")
+	}
+	args = append(args, containerName(p, name))
+	return backend.Stream(ctx, w, args...)
+}
+
+func logPrefix(label string, idx, width int) string {
+	padded := fmt.Sprintf("%-*s", width, label)
+	if !LogColor {
+		return padded + " | "
+	}
+	return "\x1b[" + logColors[idx%len(logColors)] + "m" + padded + "\x1b[0m | "
+}
+
+// syncWriter serializes concurrent writes from the per-service prefix writers to
+// the shared output.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(b)
+}
+
+// prefixWriter writes the prefix at the start of every line, buffering the
+// mid-line state across Write calls.
+type prefixWriter struct {
+	w      io.Writer
+	prefix string
+	mid    bool
+}
+
+func (p *prefixWriter) Write(b []byte) (int, error) {
+	var out []byte
+	for _, c := range b {
+		if !p.mid {
+			out = append(out, p.prefix...)
+			p.mid = true
+		}
+		out = append(out, c)
+		if c == '\n' {
+			p.mid = false
+		}
+	}
+	if _, err := p.w.Write(out); err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 // ExecOptions controls how Exec attaches to a running service container,

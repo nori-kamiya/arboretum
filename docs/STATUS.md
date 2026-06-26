@@ -103,9 +103,12 @@ Priority order:
        `<service>.<domain>` + `--dns-domain <domain>`, with `<domain>` = project
        name (also solves cross-project isolation). Domain creation is one-time
        sudo per domain → preflight + instruct (can't automate). Implement in #5.
-2. **Foreground `up` log multiplexing** — interleave `container logs -f` per
-   service with colored `name |` prefixes; Ctrl-C → stop all. (Currently Logs
-   tails services sequentially — see `orch.Logs` TODO.)
+2. ~~**Foreground `up` log multiplexing**~~ — DONE. `orch.Logs` now streams every
+   service's `container logs -f` concurrently through colored, aligned `name | `
+   prefixes (`backend.Stream` seam + `prefixWriter`/`syncWriter`); non-follow and
+   dry-run stay sequential/deterministic. Ctrl-C cancels the command context
+   (`signal.NotifyContext` in main) which kills the children. Verified on the
+   real runtime: live interleaved output and clean SIGINT shutdown.
 3. **`depends_on` healthcheck conditions** (`condition: service_healthy`) — poll
    `container inspect`/exec until healthy before starting dependents.
 4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty

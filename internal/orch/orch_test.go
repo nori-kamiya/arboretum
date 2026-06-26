@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,71 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/nori-kamiya/orchard/internal/backend"
 )
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+func TestLogs_FollowMultiplexesWithPrefixes(t *testing.T) {
+	LogColor = false
+	var buf bytes.Buffer
+	backend.DryRun, backend.Stdout = false, &buf
+	t.Cleanup(func() { LogColor = true; backend.DryRun, backend.Stdout = false, os.Stdout })
+	t.Cleanup(backend.SetStreamForTest(func(_ context.Context, w io.Writer, args ...string) error {
+		name := args[len(args)-1] // last arg is the container name
+		_, _ = io.WriteString(w, "hello from "+name+"\n")
+		return nil
+	}))
+	p := &types.Project{Name: "demo", Services: types.Services{"api": {Name: "api"}, "db": {Name: "db"}}}
+	if err := Logs(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	// width = 3 ("api"), so "db" is padded to "db ".
+	if !strings.Contains(got, "api | hello from api") || !strings.Contains(got, "db  | hello from db") {
+		t.Fatalf("multiplexed output = %q", got)
+	}
+}
+
+func TestLogs_FollowErrorPropagates(t *testing.T) {
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	t.Cleanup(backend.SetStreamForTest(func(_ context.Context, _ io.Writer, _ ...string) error {
+		return errors.New("stream failed")
+	}))
+	p := &types.Project{Name: "demo", Services: types.Services{"api": {Name: "api"}}}
+	if err := Logs(context.Background(), p, true); err == nil {
+		t.Fatal("expected stream error")
+	}
+}
+
+func TestLogs_FollowSwallowsErrorOnCancel(t *testing.T) {
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	t.Cleanup(backend.SetStreamForTest(func(_ context.Context, _ io.Writer, _ ...string) error {
+		return errors.New("killed by cancel")
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &types.Project{Name: "demo", Services: types.Services{"api": {Name: "api"}}}
+	if err := Logs(ctx, p, true); err != nil {
+		t.Fatalf("cancellation should swallow the error, got %v", err)
+	}
+}
+
+func TestLogPrefix_Colored(t *testing.T) {
+	got := logPrefix("api", 0, 5) // LogColor defaults to true
+	if !strings.Contains(got, "\x1b[36m") || !strings.Contains(got, "api") || !strings.Contains(got, "| ") {
+		t.Fatalf("colored prefix = %q", got)
+	}
+}
+
+func TestPrefixWriter_PropagatesWriteError(t *testing.T) {
+	pw := &prefixWriter{w: errWriter{}, prefix: "x | "}
+	if _, err := pw.Write([]byte("hi\n")); err == nil {
+		t.Fatal("expected write error")
+	}
+}
 
 func ptr(s string) *string { return &s }
 

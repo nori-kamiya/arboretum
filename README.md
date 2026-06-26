@@ -150,8 +150,7 @@ Remaining gaps:
   cross-project name collisions are a known limitation.
 - **Config changes on `up`** — an existing container is left as-is; `up` does not
   yet diff config to recreate it. Run `down` first to apply compose edits.
-- Foreground `up` log multiplexing, `depends_on` healthcheck conditions,
-  profiles, restart policies — phase 2+.
+- `depends_on` healthcheck conditions, profiles, restart policies — phase 2+.
 
 ## Nix
 
