@@ -129,8 +129,40 @@ func TestExec_LoadError(t *testing.T) {
 	}
 }
 
+func TestPs_QuietAndJSON_DryRun(t *testing.T) {
+	for _, flag := range []string{"--quiet", "--format=json"} {
+		code, _, errOut := runCLI("ps", flag, "--dry-run", "-f", composeFile)
+		if code != 0 {
+			t.Fatalf("ps %s: exit %d, stderr=%s", flag, code, errOut)
+		}
+	}
+}
+
+func TestLifecycleCommands_DryRun(t *testing.T) {
+	for _, sub := range []string{"stop", "start", "restart"} {
+		code, _, errOut := runCLI(sub, "--dry-run", "-f", composeFile)
+		if code != 0 {
+			t.Fatalf("%s: exit %d, stderr=%s", sub, code, errOut)
+		}
+	}
+}
+
+func TestConfig_DryRun(t *testing.T) {
+	code, out, errOut := runCLI("config", "--dry-run", "-f", composeFile)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "api") || !strings.Contains(out, "services:") {
+		t.Fatalf("config output = %q", out)
+	}
+	code, out, _ = runCLI("config", "--services", "--dry-run", "-f", composeFile)
+	if code != 0 || !strings.Contains(out, "db") {
+		t.Fatalf("config --services = %q", out)
+	}
+}
+
 func TestEachCommand_LoadError(t *testing.T) {
-	for _, sub := range []string{"up", "down", "ps", "logs"} {
+	for _, sub := range []string{"up", "down", "ps", "logs", "stop", "start", "restart", "config"} {
 		code, _, errOut := runCLI(sub, "--dry-run", "-f", "no-such-file.yaml")
 		if code != 1 {
 			t.Errorf("%s: exit = %d, want 1", sub, code)

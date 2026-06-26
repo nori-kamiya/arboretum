@@ -11,9 +11,12 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
 
 ## Current state (Phase 1 / MVP — DONE; Phase 2 in progress)
 
-- Commands: `up` (`-d`), `down` (`--prune-builder`), `ps`, `logs` (`--follow`),
-  `exec` (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via non-interspersed flags),
-  and `builder` (`status`/`start`/`stop`/`delete`) wrapping `container builder`.
+- Commands: `up` (`-d`, per-service ✔ summary), `down` (`--prune-builder`),
+  `ps` (table SERVICE/NAME/STATE/PORTS, `-q`, `--format json`), `logs`
+  (`--follow`), `exec` (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via
+  non-interspersed flags), `stop`/`start`/`restart` (operate on existing
+  containers by label), `config` (`--services`, `--format json`), and
+  `builder` (`status`/`start`/`stop`/`delete`) wrapping `container builder`.
   `builder` is a deliberate superset (its own namespace, like `docker compose`
   vs `docker builder`) so compose compatibility is preserved; `down` stays
   compose-pure unless `--prune-builder` is passed. Verified on the real runtime.

@@ -4,6 +4,7 @@ package orch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
@@ -49,6 +51,7 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 	if err != nil {
 		return err
 	}
+	summary := make(map[string]string, len(order))
 	for _, name := range order {
 		svc := p.Services[name]
 		cname := containerName(p, name)
@@ -57,6 +60,9 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 				if err := backend.Run(ctx, "start", cname); err != nil {
 					return fmt.Errorf("start %s: %w", name, err)
 				}
+				summary[name] = "started"
+			} else {
+				summary[name] = "running"
 			}
 			continue
 		}
@@ -83,6 +89,13 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 		if err := backend.Run(ctx, runArgs(p, svc)...); err != nil {
 			return fmt.Errorf("start %s: %w", name, err)
 		}
+		summary[name] = "started"
+	}
+	// Real-run summary (dry-run already printed the exact commands).
+	if !backend.DryRun {
+		for _, name := range order {
+			fmt.Fprintf(backend.Stdout, "✔ %s %s\n", name, summary[name])
+		}
 	}
 	if !detach {
 		return Logs(ctx, p, true)
@@ -104,24 +117,116 @@ func Down(ctx context.Context, p *types.Project) error {
 	return nil
 }
 
-// Ps lists this project's containers, writing to out.
-func Ps(ctx context.Context, p *types.Project, out io.Writer) error {
+// Stop stops this project's containers without removing them.
+func Stop(ctx context.Context, p *types.Project) error {
+	return forEachContainer(ctx, p, "stop")
+}
+
+// Start (re)starts this project's existing containers.
+func Start(ctx context.Context, p *types.Project) error {
+	return forEachContainer(ctx, p, "start")
+}
+
+// Restart stops then starts this project's containers (`container` has no
+// `restart` subcommand).
+func Restart(ctx context.Context, p *types.Project) error {
+	if err := Stop(ctx, p); err != nil {
+		return err
+	}
+	return Start(ctx, p)
+}
+
+// forEachContainer runs a single `container <action> <name>` for every container
+// owned by the project, in a stable order.
+func forEachContainer(ctx context.Context, p *types.Project, action string) error {
 	cs, err := backend.ListByProject(ctx, p.Name)
 	if err != nil {
 		return err
 	}
-	if len(cs) == 0 {
-		fmt.Fprintf(out, "(no containers for project %s)\n", p.Name)
-		return nil
+	names := make([]string, 0, len(cs))
+	for _, c := range cs {
+		names = append(names, c.Name)
 	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := backend.Run(ctx, action, name); err != nil {
+			return fmt.Errorf("%s %s: %w", action, name, err)
+		}
+	}
+	return nil
+}
+
+// PsOptions controls ps output.
+type PsOptions struct {
+	Quiet  bool   // -q: print only container names
+	Format string // "" (table) or "json"
+}
+
+type psRow struct {
+	Service string `json:"service"`
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	Ports   string `json:"ports"`
+}
+
+// Ps lists this project's containers as an aligned table (SERVICE/NAME/STATE/
+// PORTS), or as names only (Quiet) / JSON (Format).
+func Ps(ctx context.Context, p *types.Project, out io.Writer, opts PsOptions) error {
+	cs, err := backend.ListByProject(ctx, p.Name)
+	if err != nil {
+		return err
+	}
+	rows := make([]psRow, 0, len(cs))
 	for _, c := range cs {
 		state := c.State
 		if state == "" {
 			state = "-"
 		}
-		fmt.Fprintf(out, "%-24s %-10s %s\n", c.Name, state, c.Labels[backend.LabelService])
+		svc := c.Labels[backend.LabelService]
+		rows = append(rows, psRow{Service: svc, Name: c.Name, State: state, Ports: portsFor(p, svc)})
 	}
-	return nil
+
+	switch {
+	case opts.Quiet:
+		for _, r := range rows {
+			fmt.Fprintln(out, r.Name)
+		}
+		return nil
+	case opts.Format == "json":
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rows)
+	default:
+		if len(rows) == 0 {
+			fmt.Fprintf(out, "(no containers for project %s)\n", p.Name)
+			return nil
+		}
+		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "SERVICE\tNAME\tSTATE\tPORTS")
+		for _, r := range rows {
+			ports := r.Ports
+			if ports == "" {
+				ports = "-"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Service, r.Name, r.State, ports)
+		}
+		return tw.Flush()
+	}
+}
+
+// portsFor renders a service's published port mappings as "published->target".
+func portsFor(p *types.Project, service string) string {
+	svc, ok := p.Services[service]
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, port := range svc.Ports {
+		if port.Published != "" {
+			parts = append(parts, fmt.Sprintf("%s->%d", port.Published, port.Target))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // LogColor toggles ANSI coloring of per-service log prefixes. Tests disable it
@@ -270,6 +375,37 @@ func Exec(ctx context.Context, p *types.Project, service string, opts ExecOption
 	args = append(args, containerName(p, service))
 	args = append(args, cmd...)
 	return backend.Run(ctx, args...)
+}
+
+// ConfigOptions controls config output.
+type ConfigOptions struct {
+	ServicesOnly bool   // --services: print active service names only
+	Format       string // "" (yaml) or "json"
+}
+
+// Config renders the merged, profile/override-resolved project so users can see
+// exactly what orchard will act on.
+func Config(p *types.Project, out io.Writer, opts ConfigOptions) error {
+	if opts.ServicesOnly {
+		for _, name := range sortedServiceNames(p) {
+			fmt.Fprintln(out, name)
+		}
+		return nil
+	}
+	b, err := marshalProject(p, opts.Format == "json")
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(b)
+	return err
+}
+
+// marshalProject is the seam for rendering a project (swapped in tests).
+var marshalProject = func(p *types.Project, asJSON bool) ([]byte, error) {
+	if asJSON {
+		return p.MarshalJSON()
+	}
+	return p.MarshalYAML()
 }
 
 // Builder runs a `container builder` management action (status/start/stop/

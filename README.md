@@ -68,9 +68,12 @@ Verify with `orchard version`.
 
 ```sh
 orchard up -d            # build, create network/volumes, start in dep order
-orchard ps               # list this project's containers
-orchard logs --follow    # tail logs
+orchard ps               # table: SERVICE / NAME / STATE / PORTS
+orchard ps -q            # names only;  ps --format json for scripting
+orchard logs --follow    # tail logs (colored, per-service prefixes)
 orchard exec db psql     # run a command in a running service container
+orchard stop|start|restart   # operate on existing containers (no teardown)
+orchard config           # print the resolved compose (--services, --format json)
 orchard down             # stop + remove containers and the network
 ```
 

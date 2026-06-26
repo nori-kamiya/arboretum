@@ -121,13 +121,52 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		Use:   "ps",
 		Short: "List containers for this project",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts := orch.PsOptions{}
+			opts.Quiet, _ = cmd.Flags().GetBool("quiet")
+			opts.Format, _ = cmd.Flags().GetString("format")
 			p, err := load(cmd.Context())
 			if err != nil {
 				return err
 			}
-			return orch.Ps(cmd.Context(), p, out)
+			return orch.Ps(cmd.Context(), p, out, opts)
 		},
 	}
+	ps.Flags().BoolP("quiet", "q", false, "only display container names")
+	ps.Flags().String("format", "", "output format: table (default) or json")
+
+	mkLifecycle := func(use, short string, fn func(context.Context, *types.Project) error) *cobra.Command {
+		return &cobra.Command{
+			Use:   use,
+			Short: short,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				p, err := load(cmd.Context())
+				if err != nil {
+					return err
+				}
+				return fn(cmd.Context(), p)
+			},
+		}
+	}
+	stop := mkLifecycle("stop", "Stop containers without removing them", orch.Stop)
+	start := mkLifecycle("start", "Start existing containers", orch.Start)
+	restart := mkLifecycle("restart", "Restart containers", orch.Restart)
+
+	config := &cobra.Command{
+		Use:   "config",
+		Short: "Render the resolved compose configuration",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts := orch.ConfigOptions{}
+			opts.ServicesOnly, _ = cmd.Flags().GetBool("services")
+			opts.Format, _ = cmd.Flags().GetString("format")
+			p, err := load(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return orch.Config(p, out, opts)
+		},
+	}
+	config.Flags().Bool("services", false, "print active service names only")
+	config.Flags().String("format", "", "output format: yaml (default) or json")
 
 	logs := &cobra.Command{
 		Use:   "logs",
@@ -208,6 +247,6 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		mkBuilder("delete", "Delete the builder"),
 	)
 
-	root.AddCommand(up, down, ps, logs, exec, builder, versionCmd)
+	root.AddCommand(up, down, ps, logs, exec, stop, start, restart, config, builder, versionCmd)
 	return root
 }

@@ -887,7 +887,7 @@ func TestPs_ListsContainers(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 
 	var buf bytes.Buffer
-	if err := Ps(context.Background(), &types.Project{Name: "demo"}, &buf); err != nil {
+	if err := Ps(context.Background(), &types.Project{Name: "demo"}, &buf, PsOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "db") {
@@ -903,7 +903,7 @@ func TestPs_Empty(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 
 	var buf bytes.Buffer
-	if err := Ps(context.Background(), &types.Project{Name: "demo"}, &buf); err != nil {
+	if err := Ps(context.Background(), &types.Project{Name: "demo"}, &buf, PsOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "no containers") {
@@ -917,8 +917,179 @@ func TestPs_ErrorPropagates(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	if err := Ps(context.Background(), &types.Project{Name: "demo"}, &bytes.Buffer{}); err == nil {
+	if err := Ps(context.Background(), &types.Project{Name: "demo"}, &bytes.Buffer{}, PsOptions{}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func psStub(jsonOut string) func() {
+	return backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return []byte(jsonOut), nil
+	})
+}
+
+const oneRunningWeb = `[{"id":"web.demo","status":{"state":"running"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"web"}}}]`
+
+func TestPs_TableWithPorts(t *testing.T) {
+	t.Cleanup(psStub(oneRunningWeb))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"web": {Name: "web", Ports: []types.ServicePortConfig{{Published: "8080", Target: 3000}}},
+	}}
+	var buf bytes.Buffer
+	if err := Ps(context.Background(), p, &buf, PsOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"SERVICE", "NAME", "STATE", "PORTS", "web.demo", "running", "8080->3000"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("table missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPs_QuietAndJSON(t *testing.T) {
+	t.Cleanup(psStub(oneRunningWeb))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo"}
+
+	var buf bytes.Buffer
+	if err := Ps(context.Background(), p, &buf, PsOptions{Quiet: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(buf.String()) != "web.demo" {
+		t.Fatalf("quiet = %q", buf.String())
+	}
+
+	buf.Reset()
+	if err := Ps(context.Background(), p, &buf, PsOptions{Format: "json"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"name": "web.demo"`) || !strings.Contains(buf.String(), `"service": "web"`) {
+		t.Fatalf("json = %q", buf.String())
+	}
+}
+
+func TestPortsFor(t *testing.T) {
+	p := &types.Project{Services: types.Services{
+		"web": {Ports: []types.ServicePortConfig{{Published: "8080", Target: 3000}, {Target: 9000}}},
+	}}
+	if got := portsFor(p, "web"); got != "8080->3000" { // unpublished port skipped
+		t.Fatalf("ports = %q", got)
+	}
+	if got := portsFor(p, "missing"); got != "" {
+		t.Fatalf("unknown service = %q", got)
+	}
+}
+
+// --- start/stop/restart ----------------------------------------------------
+
+const twoContainers = `[
+	{"id":"b.demo","configuration":{"labels":{"orchard.project":"demo","orchard.service":"b"}}},
+	{"id":"a.demo","configuration":{"labels":{"orchard.project":"demo","orchard.service":"a"}}}
+]`
+
+func TestStopStartRestart(t *testing.T) {
+	var actions []string
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "ls --all") {
+			return []byte(twoContainers), nil
+		}
+		actions = append(actions, cmd)
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo"}
+
+	if err := Stop(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(actions, "|") != "stop a.demo|stop b.demo" { // sorted
+		t.Fatalf("stop actions = %v", actions)
+	}
+	actions = nil
+	if err := Restart(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(actions, "|") != "stop a.demo|stop b.demo|start a.demo|start b.demo" {
+		t.Fatalf("restart actions = %v", actions)
+	}
+}
+
+func TestForEachContainer_Errors(t *testing.T) {
+	// ListByProject error.
+	restore := backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("ls fail")
+	})
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	if err := Stop(context.Background(), &types.Project{Name: "demo"}); err == nil {
+		t.Fatal("expected list error")
+	}
+	if err := Restart(context.Background(), &types.Project{Name: "demo"}); err == nil {
+		t.Fatal("expected restart (stop) error")
+	}
+	restore()
+
+	// Per-container action error.
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if strings.HasPrefix(strings.Join(args, " "), "ls --all") {
+			return []byte(twoContainers), nil
+		}
+		return nil, errors.New("action fail")
+	}))
+	if err := Start(context.Background(), &types.Project{Name: "demo"}); err == nil {
+		t.Fatal("expected action error")
+	}
+}
+
+// --- config ----------------------------------------------------------------
+
+func TestConfig(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", Image: "nginx"}}}
+
+	var buf bytes.Buffer
+	if err := Config(p, &buf, ConfigOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "web") || !strings.Contains(buf.String(), "nginx") {
+		t.Fatalf("yaml = %q", buf.String())
+	}
+
+	buf.Reset()
+	if err := Config(p, &buf, ConfigOptions{ServicesOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(buf.String()) != "web" {
+		t.Fatalf("services = %q", buf.String())
+	}
+
+	buf.Reset()
+	if err := Config(p, &buf, ConfigOptions{Format: "json"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"web"`) {
+		t.Fatalf("json = %q", buf.String())
+	}
+}
+
+func TestConfig_MarshalError(t *testing.T) {
+	prev := marshalProject
+	marshalProject = func(*types.Project, bool) ([]byte, error) { return nil, errors.New("marshal fail") }
+	t.Cleanup(func() { marshalProject = prev })
+	if err := Config(&types.Project{Name: "demo"}, &bytes.Buffer{}, ConfigOptions{}); err == nil {
+		t.Fatal("expected marshal error")
+	}
+}
+
+func TestConfig_WriteError(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", Image: "nginx"}}}
+	if err := Config(p, errWriter{}, ConfigOptions{}); err == nil {
+		t.Fatal("expected write error")
 	}
 }
 
