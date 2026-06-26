@@ -84,11 +84,25 @@ Priority order:
      1024 MB / 4). **Bug fixed:** Apple `container --cpus` takes whole CPUs only
      (rejected `0.5`), so `cpuLimit` now rounds fractional compose limits up
      (`0.5` → `1`), never under-provisioning. `trimFloat` removed.
-   - **Service-name DNS — needs host setup (see Phase 2 #8).** The embedded DNS
-     (192.168.65.1) returns NXDOMAIN for bare service names until a *local DNS
-     domain* is created: `sudo container system dns create <domain>` (admin
-     only), and containers must run with `--dns-domain <domain>`. orchard does
-     not pass `--dns-domain` yet — tracked as the cross-project/DNS work.
+   - **Service-name DNS — root-caused; recipe verified (drives #5 below).**
+     Findings on container 1.0.0 (cross-checked with apple/container docs):
+     - The embedded DNS *works* (resolves external names) and container↔container
+       *IP* connectivity works; only **name records** were missing.
+     - Apple registers a container under its **literal name**; resolution needs a
+       *local DNS domain* (`sudo container system dns create <domain>`, admin).
+       The intended path is a **default domain** system property (`[dns] domain`)
+       so a container named `web` auto-registers as `web.<domain>` — but
+       `container system property` has **no `set`** in 1.0.0, so it can't be set
+       via CLI. `--dns-domain` only writes the container's resolv.conf; it does
+       NOT register the record.
+     - **Verified workaround that needs no default-domain property:** name the
+       container `<service>.<domain>` (so it registers) AND pass
+       `--dns-domain <domain>` to peers (search domain) → a peer resolves the
+       **bare `<service>`**. Confirmed both container→container and host→container.
+     - Implication for orchard: deliver compose DNS by setting container name =
+       `<service>.<domain>` + `--dns-domain <domain>`, with `<domain>` = project
+       name (also solves cross-project isolation). Domain creation is one-time
+       sudo per domain → preflight + instruct (can't automate). Implement in #5.
 2. **Foreground `up` log multiplexing** — interleave `container logs -f` per
    service with colored `name |` prefixes; Ctrl-C → stop all. (Currently Logs
    tails services sequentially — see `orch.Logs` TODO.)
@@ -97,8 +111,13 @@ Priority order:
 4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty
    --interactive` by default, `-T` to disable). Verified against real
    `container exec` (env passthrough + command execution work).
-5. **Cross-project safety** — optional name prefixing + `--network-alias` once we
-   confirm alias support, removing the one-project-at-a-time caveat.
+5. **Cross-project safety + service-name DNS** (verified design, see item 1).
+   Name containers `<service>.<project>`, run with `--dns-domain <project>`, and
+   require a one-time `sudo container system dns create <project>` (preflight +
+   instruct; orchard can't sudo). Bare `<service>` then resolves within the
+   project, and distinct project domains remove cross-project collisions — fixing
+   the one-project-at-a-time caveat in one move. Fall back to bare names (today's
+   behavior) when the domain is absent, so non-networked stacks still work.
 6. profiles, `restart` policy, `compose.override.yaml`.
 
 ## Known caveats (carried)
