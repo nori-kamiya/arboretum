@@ -64,22 +64,27 @@ Design choices to keep:
 
 Priority order:
 
-1. **Real-install verification** (blocking for trust). Install `container`, then
-   pin these against reality and lock with tests:
-   - `container ls --format json` actual schema (name/labels keys). Adjust
-     `backend.extractLabels`/`firstString`.
-   - Service-name DNS actually resolving between containers on the project net.
-   - `--memory 512m` / `--cpus 0.5` unit acceptance.
-   - New `run` flags: `--workdir`, `--user`, `--entrypoint`, `--label`.
-   - `exec` flag names: `--tty` / `--interactive` (vs a combined `-it`).
+1. ~~**Real-install verification**~~ — DONE against `container` 1.0.0 on macOS 26
+   (arm64). Verified end-to-end: `up` (fresh / idempotent / restart-stopped),
+   `build` (custom Dockerfile + RUN layer), `ps` (with state), `exec` (env +
+   command), `logs`, `down` (clean removal incl. network), network reuse.
+   **Two real bugs found and fixed (with regression tests):**
+   - `container ls`/`network list --format json` nest labels/id under
+     `configuration` and state under `status` — `backend` now resolves both
+     (`resolveConfig`/`nameOf`/`stateOf`). Previously `ps` showed nothing and
+     `up` re-created the network.
+   - `up` now skips running containers and (re)starts stopped ones instead of
+     failing with "container with id X already exists".
+   Still to confirm on a multi-service net: service-name DNS resolution, and
+   `--memory`/`--cpus` unit acceptance under load (flags emit & containers run).
 2. **Foreground `up` log multiplexing** — interleave `container logs -f` per
    service with colored `name |` prefixes; Ctrl-C → stop all. (Currently Logs
    tails services sequentially — see `orch.Logs` TODO.)
 3. **`depends_on` healthcheck conditions** (`condition: service_healthy`) — poll
    `container inspect`/exec until healthy before starting dependents.
 4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty
-   --interactive` by default, `-T` to disable). Verify `--tty`/`--interactive`
-   flag names against the real `container exec` during item 1.
+   --interactive` by default, `-T` to disable). Verified against real
+   `container exec` (env passthrough + command execution work).
 5. **Cross-project safety** — optional name prefixing + `--network-alias` once we
    confirm alias support, removing the one-project-at-a-time caveat.
 6. profiles, `restart` policy, `compose.override.yaml`.

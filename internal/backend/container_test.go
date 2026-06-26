@@ -178,6 +178,48 @@ func TestListByProject_FiltersByLabel_MapForm(t *testing.T) {
 	}
 }
 
+// Regression: Apple container 1.0 nests labels/id under "configuration" and
+// state under "status". Verified against a real `container ls --format json`.
+func TestListByProject_NestedConfigurationSchema(t *testing.T) {
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return []byte(`[
+			{"id":"web","status":{"state":"running"},
+			 "configuration":{"id":"web","labels":{"orchard.project":"demo","orchard.service":"web"}}},
+			{"id":"other","configuration":{"labels":{"orchard.project":"x"}}}
+		]`), nil
+	})
+	cs, err := ListByProject(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 1 {
+		t.Fatalf("want 1 container for demo, got %+v", cs)
+	}
+	if cs[0].Name != "web" || cs[0].State != "running" || cs[0].Labels[LabelService] != "web" {
+		t.Fatalf("got %+v", cs[0])
+	}
+}
+
+func TestEnsureNetwork_AlreadyExists_NestedSchema(t *testing.T) {
+	var createCalled bool
+	swapExec(t, func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[1] == "list" {
+			// No top-level id, so nameOf must fall back to configuration.name.
+			return []byte(`[{"configuration":{"name":"demo_default"}}]`), nil
+		}
+		if len(args) >= 2 && args[1] == "create" {
+			createCalled = true
+		}
+		return nil, nil
+	})
+	if err := EnsureNetwork(context.Background(), "demo_default", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if createCalled {
+		t.Fatal("should not re-create an existing (nested-schema) network")
+	}
+}
+
 func TestListByProject_ListForm(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
 		return []byte(`[{"name":"db","labels":["orchard.project=demo","bad"]}]`), nil

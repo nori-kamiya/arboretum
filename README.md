@@ -118,17 +118,20 @@ a `homebrew-tap` repo and a `HOMEBREW_TAP_GITHUB_TOKEN` secret.
 > **Note:** a `LICENSE` file isn't in the repo yet — add one before a public
 > release (Homebrew formulae and most downstreams expect it).
 
-## Known gaps / to verify against a real install
+## Status & known gaps
 
-These are translated but not yet validated on hardware (tracked for phase 2):
+Verified end-to-end against Apple `container` 1.0.0 on macOS 26 (arm64):
+`up` (fresh / idempotent / restart-stopped), `build`, `ps`, `exec`, `logs`,
+`down`, network reuse, and the `--workdir`/`--user`/`--entrypoint`/`--label`
+translations. JSON output is parsed from the real (nested) schema.
 
-- **`container ls --format json` schema** — parsed defensively; pin field names.
+Remaining gaps:
+
 - **Service-name DNS** — relies on naming the container after the service so
   Apple's embedded DNS resolves short names. Assumes one project at a time;
   cross-project name collisions are a known limitation.
-- **`--memory` / `--cpus` units** — emitted as `512m` / `0.5`; confirm accepted.
-- **New `run`/`exec` flags** (`--workdir`, `--user`, `--entrypoint`, `--label`,
-  `exec --tty --interactive`) — translated but not yet validated on hardware.
+- **Config changes on `up`** — an existing container is left as-is; `up` does not
+  yet diff config to recreate it. Run `down` first to apply compose edits.
 - Foreground `up` log multiplexing, `depends_on` healthcheck conditions,
   profiles, restart policies — phase 2+.
 

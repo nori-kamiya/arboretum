@@ -115,10 +115,18 @@ func EnsureInstalled() error {
 }
 
 // Container is a tolerant view over an item of `container ls --format json`.
-// The exact schema of Apple container's JSON output still needs to be pinned
-// against a real install (see README "未検証"); we therefore parse defensively.
+//
+// Apple container 1.0 nests the spec under a "configuration" object (labels,
+// id, …) and runtime info under "status" (state, …), with the id also mirrored
+// at the top level:
+//
+//	{"id":"web","configuration":{"id":"web","labels":{...}},"status":{"state":"running"}}
+//
+// We parse defensively so flatter shapes (used in older builds and unit tests)
+// still work.
 type Container struct {
 	Name   string
+	State  string
 	Labels map[string]string
 	Raw    map[string]any
 }
@@ -139,12 +147,13 @@ func ListByProject(ctx context.Context, project string) ([]Container, error) {
 	}
 	var res []Container
 	for _, m := range raw {
-		labels := extractLabels(m)
+		labels := extractLabels(resolveConfig(m))
 		if labels[LabelProject] != project {
 			continue
 		}
 		res = append(res, Container{
-			Name:   firstString(m, "name", "Name", "id", "ID"),
+			Name:   nameOf(m),
+			State:  stateOf(m),
 			Labels: labels,
 			Raw:    m,
 		})
@@ -159,7 +168,7 @@ func EnsureNetwork(ctx context.Context, name, project string) error {
 		var nets []map[string]any
 		if json.Unmarshal(out, &nets) == nil {
 			for _, n := range nets {
-				if firstString(n, "name", "Name") == name {
+				if nameOf(n) == name {
 					return nil
 				}
 			}
@@ -178,6 +187,33 @@ const (
 	LabelProject = "orchard.project"
 	LabelService = "orchard.service"
 )
+
+// resolveConfig returns the nested "configuration" object when present (where
+// Apple container keeps labels/id), falling back to the map itself so flatter
+// shapes still parse.
+func resolveConfig(m map[string]any) map[string]any {
+	if c, ok := m["configuration"].(map[string]any); ok {
+		return c
+	}
+	return m
+}
+
+// nameOf resolves a resource's name, preferring the top-level id and falling
+// back to the configuration's id/name.
+func nameOf(m map[string]any) string {
+	if s := firstString(m, "id", "ID", "name", "Name"); s != "" {
+		return s
+	}
+	return firstString(resolveConfig(m), "name", "Name", "id", "ID")
+}
+
+// stateOf reads the runtime state (e.g. "running") from the status object.
+func stateOf(m map[string]any) string {
+	if st, ok := m["status"].(map[string]any); ok {
+		return firstString(st, "state", "State")
+	}
+	return ""
+}
 
 func firstString(m map[string]any, keys ...string) string {
 	for _, k := range keys {

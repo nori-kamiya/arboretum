@@ -27,12 +27,34 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 		}
 	}
 
+	// Existing containers make `up` idempotent: a running one is left alone and a
+	// stopped one is restarted, rather than failing on a name collision. (We do
+	// not yet diff config to recreate on change — a known limitation; `down`
+	// first to apply edits.)
+	existing, err := backend.ListByProject(ctx, p.Name)
+	if err != nil {
+		return err
+	}
+	state := make(map[string]string, len(existing))
+	for _, c := range existing {
+		state[c.Name] = c.State
+	}
+
 	order, err := topoSort(p)
 	if err != nil {
 		return err
 	}
 	for _, name := range order {
 		svc := p.Services[name]
+		cname := containerName(p, name)
+		if st, ok := state[cname]; ok {
+			if st != "running" {
+				if err := backend.Run(ctx, "start", cname); err != nil {
+					return fmt.Errorf("start %s: %w", name, err)
+				}
+			}
+			continue
+		}
 		if svc.Image == "" && svc.Build != nil {
 			if err := build(ctx, p, svc); err != nil {
 				return fmt.Errorf("build %s: %w", name, err)
@@ -73,7 +95,11 @@ func Ps(ctx context.Context, p *types.Project, out io.Writer) error {
 		return nil
 	}
 	for _, c := range cs {
-		fmt.Fprintf(out, "%-24s %s\n", c.Name, c.Labels[backend.LabelService])
+		state := c.State
+		if state == "" {
+			state = "-"
+		}
+		fmt.Fprintf(out, "%-24s %-10s %s\n", c.Name, state, c.Labels[backend.LabelService])
 	}
 	return nil
 }

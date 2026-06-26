@@ -374,6 +374,76 @@ func TestUp_RunErrorPropagates(t *testing.T) {
 	}
 }
 
+// up is idempotent: a running container is left alone, a stopped one is
+// (re)started, and an absent one is created.
+func TestUp_SkipsRunningStartsStopped(t *testing.T) {
+	var started []string
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "ls --all"):
+			return []byte(`[
+				{"id":"db","status":{"state":"running"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}},
+				{"id":"api","status":{"state":"stopped"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"api"}}}
+			]`), nil
+		case strings.HasPrefix(cmd, "network list"):
+			return []byte("[]"), nil
+		case strings.HasPrefix(cmd, "start "):
+			started = append(started, args[1])
+		case strings.HasPrefix(cmd, "build ") || strings.HasPrefix(cmd, "run "):
+			t.Errorf("must not build/recreate an existing container: %q", cmd)
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+
+	if err := Up(context.Background(), demoProject(), true); err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 || started[0] != "api" {
+		t.Fatalf("want only the stopped service (api) started, got %v", started)
+	}
+}
+
+func TestUp_StartStoppedErrorPropagates(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "ls --all"):
+			return []byte(`[{"id":"db","status":{"state":"exited"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}}]`), nil
+		case strings.HasPrefix(cmd, "network list"):
+			return []byte("[]"), nil
+		case strings.HasPrefix(cmd, "start "):
+			return nil, errors.New("cannot start")
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	if err := Up(context.Background(), demoProject(), true); err == nil {
+		t.Fatal("expected start error")
+	}
+}
+
+func TestUp_ListExistingErrorPropagates(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "network list") {
+			return []byte("[]"), nil
+		}
+		if strings.HasPrefix(cmd, "ls --all") {
+			return nil, errors.New("ls boom")
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	if err := Up(context.Background(), demoProject(), true); err == nil {
+		t.Fatal("expected list error")
+	}
+}
+
 func TestUp_TopoErrorPropagates(t *testing.T) {
 	failOn(t, "") // no command failure; cycle should surface first
 	p := &types.Project{Name: "demo", Services: types.Services{
