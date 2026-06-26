@@ -227,8 +227,8 @@ Verified end-to-end against Apple `container` 1.0.0 on macOS 26 (arm64).
 
 ### ❌ Not yet supported
 
-These compose features are currently **ignored** (no error) — avoid relying on
-them locally, or they'll silently differ from a real Docker setup:
+These compose features are currently **ignored** — `up` prints a warning when it
+sees them so your local stack doesn't silently differ from a real Docker setup:
 
 - **Multiple networks per service** (`networks: [a, b]`) — everything joins one
   per-project network. No network aliases / external / custom subnets.

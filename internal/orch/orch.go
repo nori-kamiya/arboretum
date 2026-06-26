@@ -25,6 +25,7 @@ func networkName(p *types.Project) string { return p.Name + "_default" }
 // Up builds (when needed), creates the network/volumes and starts every service
 // in dependency order. When detach is false it tails logs afterwards.
 func Up(ctx context.Context, p *types.Project, detach, forceRecreate bool) error {
+	warnUnsupported(p)
 	hintServiceDNS(ctx, p)
 	if err := backend.EnsureNetwork(ctx, networkName(p), p.Name); err != nil {
 		return err
@@ -519,6 +520,30 @@ var marshalProject = func(p *types.Project, asJSON bool) ([]byte, error) {
 // into up/down.
 func Builder(ctx context.Context, action string) error {
 	return backend.Run(ctx, "builder", action)
+}
+
+// warnUnsupported flags compose features arboretum currently ignores, so a local
+// stack doesn't silently diverge from a real Docker setup.
+func warnUnsupported(p *types.Project) {
+	warn := func(msg string) { fmt.Fprintln(backend.Stdout, "arboretum: warning: "+msg) }
+	if len(p.Secrets) > 0 {
+		warn("`secrets` are not supported and will be ignored")
+	}
+	if len(p.Configs) > 0 {
+		warn("`configs` are not supported and will be ignored")
+	}
+	for _, name := range sortedServiceNames(p) {
+		svc := p.Services[name]
+		for _, net := range sortedKeys(svc.Networks) {
+			if net != "default" {
+				warn(fmt.Sprintf("service %q: custom networks are ignored; all services share one project network", name))
+				break
+			}
+		}
+		if svc.Deploy != nil && svc.Deploy.Replicas != nil && *svc.Deploy.Replicas > 1 {
+			warn(fmt.Sprintf("service %q: deploy.replicas=%d is not supported; running a single instance", name, *svc.Deploy.Replicas))
+		}
+	}
 }
 
 // hintServiceDNS prints a one-time hint when a multi-service project lacks its

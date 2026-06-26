@@ -262,6 +262,35 @@ func TestBuilder_ErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestWarnUnsupported(t *testing.T) {
+	var buf bytes.Buffer
+	backend.Stdout = &buf
+	t.Cleanup(func() { backend.Stdout = os.Stdout })
+
+	reps := 3
+	p := &types.Project{
+		Name:    "demo",
+		Secrets: types.Secrets{"s": {}},
+		Configs: types.Configs{"c": {}},
+		Services: types.Services{
+			"plain": {Name: "plain", Networks: map[string]*types.ServiceNetworkConfig{"default": nil}},
+			"multi": {Name: "multi", Networks: map[string]*types.ServiceNetworkConfig{"frontend": nil}},
+			"scaled": {Name: "scaled", Networks: map[string]*types.ServiceNetworkConfig{"default": nil},
+				Deploy: &types.DeployConfig{Replicas: &reps}},
+		},
+	}
+	warnUnsupported(p)
+	out := buf.String()
+	for _, want := range []string{"`secrets`", "`configs`", `service "multi": custom networks`, `service "scaled": deploy.replicas=3`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing warning %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `service "plain"`) {
+		t.Errorf("plain (default network only) should not warn:\n%s", out)
+	}
+}
+
 // --- service DNS hint ------------------------------------------------------
 
 func TestHintServiceDNS(t *testing.T) {
