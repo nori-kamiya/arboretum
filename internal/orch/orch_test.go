@@ -104,6 +104,10 @@ func limitFor(mem types.UnitBytes, cpu types.NanoCPUs) *types.DeployConfig {
 	return &types.DeployConfig{Resources: types.Resources{Limits: &types.Resource{MemoryBytes: mem, NanoCPUs: cpu}}}
 }
 
+func reservationFor(mem types.UnitBytes, cpu types.NanoCPUs) *types.DeployConfig {
+	return &types.DeployConfig{Resources: types.Resources{Reservations: &types.Resource{MemoryBytes: mem, NanoCPUs: cpu}}}
+}
+
 // --- pure helpers ----------------------------------------------------------
 
 func TestHumanBytes(t *testing.T) {
@@ -143,6 +147,12 @@ func TestMemLimit(t *testing.T) {
 	if got := memLimit(types.ServiceConfig{MemLimit: 256 << 20}); got != "256m" {
 		t.Errorf("legacy mem_limit = %q", got)
 	}
+	if got := memLimit(types.ServiceConfig{Deploy: reservationFor(128<<20, 0)}); got != "128m" {
+		t.Errorf("reservations.memory fallback = %q", got)
+	}
+	if got := memLimit(types.ServiceConfig{MemReservation: 64 << 20}); got != "64m" {
+		t.Errorf("mem_reservation fallback = %q", got)
+	}
 	if got := memLimit(types.ServiceConfig{}); got != "" {
 		t.Errorf("no limit = %q", got)
 	}
@@ -156,6 +166,12 @@ func TestCPULimit(t *testing.T) {
 			t.Errorf("cpuLimit(%v) = %q, want %q", in, got, want)
 		}
 	}
+	if got := cpuLimit(types.ServiceConfig{CPUS: 0.5}); got != "1" { // legacy top-level cpus
+		t.Errorf("legacy cpus = %q", got)
+	}
+	if got := cpuLimit(types.ServiceConfig{Deploy: reservationFor(0, 2)}); got != "2" {
+		t.Errorf("reservations.cpus fallback = %q", got)
+	}
 	if got := cpuLimit(types.ServiceConfig{}); got != "" {
 		t.Errorf("no cpus = %q", got)
 	}
@@ -164,6 +180,9 @@ func TestCPULimit(t *testing.T) {
 func TestLimits_NilDeploy(t *testing.T) {
 	if limits(types.ServiceConfig{}) != nil {
 		t.Fatal("nil deploy should yield nil limits")
+	}
+	if reservations(types.ServiceConfig{}) != nil {
+		t.Fatal("nil deploy should yield nil reservations")
 	}
 }
 
@@ -656,6 +675,21 @@ func TestBuild_WithDockerfileAndContext(t *testing.T) {
 	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{Context: "./app", Dockerfile: "Dockerfile.dev"}}
 	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
 	if strings.TrimSpace(out) != "container build -t demo-api -f Dockerfile.dev ./app" {
+		t.Fatalf("build cmd = %q", out)
+	}
+}
+
+func TestBuild_ArgsTargetLabels(t *testing.T) {
+	p := &types.Project{Name: "demo"}
+	v := "1.21"
+	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{
+		Context: ".", Target: "runtime",
+		Args:   types.MappingWithEquals{"GO_VERSION": &v, "FROM_ENV": nil},
+		Labels: types.Labels{"tier": "api"},
+	}}
+	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
+	want := "container build -t demo-api --target runtime --build-arg FROM_ENV --build-arg GO_VERSION=1.21 --label tier=api ."
+	if strings.TrimSpace(out) != want {
 		t.Fatalf("build cmd = %q", out)
 	}
 }
@@ -1226,7 +1260,7 @@ func TestRunOneOff(t *testing.T) {
 		return RunOneOff(context.Background(), p, "web", RunOptions{Env: []string{"B=2"}}, "sh", "-c", "echo hi")
 	})
 	want := "container run --rm --tty --interactive --network demo_default --dns-domain demo --env A=1 --env NOVAL --env B=2 nginx sh -c echo hi"
-	if strings.TrimSpace(out) != want {
+	if !strings.Contains(out, want) { // EnsureNetwork echoes a line first under dry-run
 		t.Fatalf("run = %q", out)
 	}
 
@@ -1240,6 +1274,18 @@ func TestRunOneOff(t *testing.T) {
 
 	if err := RunOneOff(context.Background(), p, "ghost", RunOptions{}); err == nil {
 		t.Fatal("expected unknown-service error")
+	}
+}
+
+func TestRunOneOff_NetworkError(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("net fail")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", Image: "nginx"}}}
+	if err := RunOneOff(context.Background(), p, "web", RunOptions{}); err == nil {
+		t.Fatal("expected network error")
 	}
 }
 

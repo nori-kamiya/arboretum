@@ -89,8 +89,41 @@ config-hash differs); `--force-recreate` recreates regardless. `down` keeps
 containers for services no longer in the file unless you pass `--remove-orphans`.
 
 Flags: `-f/--file` (repeatable), `-p/--project-name`, `--profile` (repeatable),
-`--dry-run`. `compose.override.yaml` and multiple `-f` files are merged as in
-Docker Compose.
+`--dry-run`.
+
+### Compose file discovery
+
+With no `-f`, arboretum auto-discovers, in order, `compose.yaml`, `compose.yml`,
+`docker-compose.yml`, `docker-compose.yaml` in the working directory, and merges
+the matching `*.override.{yml,yaml}` on top. Pass `-f` (repeatable) to use
+specific files; multiple `-f` are merged left-to-right, as in Docker Compose.
+
+### Builds (Dockerfile)
+
+A service's `build:` is run with `container build` and the resulting image is
+used for `run`, so the Dockerfile's `ENTRYPOINT`/`CMD`/`ENV`/etc. apply. The
+compose build options `dockerfile`, `target`, `args`, and `labels` are forwarded
+(`-f` / `--target` / `--build-arg` / `--label`).
+
+### Resources (CPU / memory)
+
+Each container is its own VM, so sizing matters. arboretum resolves CPU/memory in
+order: `deploy.resources.limits` → legacy `mem_limit`/`cpus` → `deploy.resources.
+reservations`/`mem_reservation`, e.g.
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g }   # or, legacy:  cpus: 2 / mem_limit: 1g
+```
+
+When a service sets none (e.g. a plain image or Dockerfile build), arboretum
+passes no `--memory`/`--cpus` and `container` uses its own defaults (the
+`[container]` system property). Note `container` allocates **whole CPUs**, so a
+fractional `cpus` is rounded up.
 
 Shell completion is built in (cobra): `arboretum completion zsh > ...` (also
 `bash`, `fish`, `powershell`).

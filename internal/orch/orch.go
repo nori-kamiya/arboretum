@@ -193,6 +193,9 @@ func RunOneOff(ctx context.Context, p *types.Project, service string, opts RunOp
 	if !ok {
 		return fmt.Errorf("no such service: %s", service)
 	}
+	if err := backend.EnsureNetwork(ctx, networkName(p), p.Name); err != nil {
+		return err
+	}
 	args := []string{"run", "--rm"}
 	if opts.Detach {
 		args = append(args, "--detach")
@@ -638,6 +641,19 @@ func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error
 	if svc.Build.Dockerfile != "" {
 		args = append(args, "-f", svc.Build.Dockerfile)
 	}
+	if svc.Build.Target != "" {
+		args = append(args, "--target", svc.Build.Target)
+	}
+	for _, k := range sortedEnvKeys(svc.Build.Args) {
+		if v := svc.Build.Args[k]; v != nil {
+			args = append(args, "--build-arg", k+"="+*v)
+		} else {
+			args = append(args, "--build-arg", k)
+		}
+	}
+	for _, k := range sortedKeys(svc.Build.Labels) {
+		args = append(args, "--label", k+"="+svc.Build.Labels[k])
+	}
 	ctxDir := svc.Build.Context
 	if ctxDir == "" {
 		ctxDir = "."
@@ -749,28 +765,50 @@ func imageRef(p *types.Project, svc types.ServiceConfig) string {
 
 // --- resource limits -------------------------------------------------------
 
+// Memory/CPU sizing resolves in order: deploy.resources.limits → legacy
+// mem_limit/cpus → deploy.resources.reservations (→ mem_reservation). When
+// nothing is set we emit no flag, so `container` sizes the VM with its own
+// defaults (the `[container]` system property). `container` takes whole CPUs, so
+// a fractional value is rounded up; bytes use the smallest k/m/g suffix.
+
 func memLimit(svc types.ServiceConfig) string {
-	var b types.UnitBytes
-	if lim := limits(svc); lim != nil && lim.MemoryBytes > 0 {
-		b = lim.MemoryBytes
-	} else if svc.MemLimit > 0 {
-		b = svc.MemLimit
+	if b := resourceMem(svc); b > 0 {
+		return humanBytes(int64(b))
 	}
-	if b <= 0 {
-		return ""
-	}
-	return humanBytes(int64(b))
+	return ""
 }
 
-// cpuLimit maps a compose CPU limit to `container`'s --cpus, which accepts only
-// whole CPUs (unlike Docker's fractional --cpus). We round a fractional limit up
-// so we never under-provision (e.g. cpus: "0.5" -> "1").
 func cpuLimit(svc types.ServiceConfig) string {
-	lim := limits(svc)
-	if lim == nil || lim.NanoCPUs <= 0 {
-		return ""
+	if n := resourceCPU(svc); n > 0 {
+		return strconv.Itoa(int(math.Ceil(float64(n))))
 	}
-	return strconv.Itoa(int(math.Ceil(float64(lim.NanoCPUs))))
+	return ""
+}
+
+func resourceMem(svc types.ServiceConfig) types.UnitBytes {
+	if r := limits(svc); r != nil && r.MemoryBytes > 0 {
+		return r.MemoryBytes
+	}
+	if svc.MemLimit > 0 {
+		return svc.MemLimit
+	}
+	if r := reservations(svc); r != nil && r.MemoryBytes > 0 {
+		return r.MemoryBytes
+	}
+	return svc.MemReservation
+}
+
+func resourceCPU(svc types.ServiceConfig) types.NanoCPUs {
+	if r := limits(svc); r != nil && r.NanoCPUs > 0 {
+		return r.NanoCPUs
+	}
+	if svc.CPUS > 0 {
+		return types.NanoCPUs(svc.CPUS)
+	}
+	if r := reservations(svc); r != nil && r.NanoCPUs > 0 {
+		return r.NanoCPUs
+	}
+	return 0
 }
 
 func limits(svc types.ServiceConfig) *types.Resource {
@@ -778,6 +816,13 @@ func limits(svc types.ServiceConfig) *types.Resource {
 		return nil
 	}
 	return svc.Deploy.Resources.Limits
+}
+
+func reservations(svc types.ServiceConfig) *types.Resource {
+	if svc.Deploy == nil {
+		return nil
+	}
+	return svc.Deploy.Resources.Reservations
 }
 
 func humanBytes(b int64) string {

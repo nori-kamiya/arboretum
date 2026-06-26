@@ -22,11 +22,16 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
   `builder` is a deliberate superset (its own namespace, like `docker compose`
   vs `docker builder`) so compose compatibility is preserved; `down` stays
   compose-pure unless `--prune-builder` is passed. Verified on the real runtime.
-- Compose features translated: `image`, `build` (context + dockerfile),
-  `environment`, `ports`, `volumes` (+ named volumes pre-created), `networks`
+- File discovery: `compose.yaml`/`.yml` and `docker-compose.yml`/`.yaml` (+ their
+  `*.override.*`) are auto-discovered when no `-f` is given (compose-go default).
+- Compose features translated: `image`, `build` (context, dockerfile, target,
+  args, labels), `environment`, `ports`, `volumes` (+ named volumes pre-created),
+  `networks`
   (single per-project network), `depends_on` (topological start order),
-  resource limits (`deploy.resources.limits.memory/cpus` and legacy
-  `mem_limit`/`cpus`) → `container run --memory/--cpus`, plus `working_dir`
+  CPU/memory sizing → `container run --memory/--cpus`, resolved in order
+  `deploy.resources.limits` → legacy `mem_limit`/`cpus` → `deploy.resources.
+  reservations`/`mem_reservation`; unset → `container`'s own defaults. (`--cpus`
+  is whole-CPU only, so fractional values round up.) Plus `working_dir`
   → `--workdir`, `user` → `--user`, user `labels` → `--label`, and
   `entrypoint` (`[0]` → `--entrypoint`, rest prepended to the command).
 - **Preflight**: real (non-dry-run) commands check `container` is on PATH first
