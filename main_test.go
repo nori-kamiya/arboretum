@@ -33,17 +33,17 @@ func TestUp_DryRun_EmitsExpectedCommands(t *testing.T) {
 	mustContain(t, out,
 		"container network create --label orchard.project=demo demo_default",
 		"container volume create --label orchard.project=demo dbdata",
-		"--name db --network demo_default",
+		"--name db.demo --network demo_default --dns-domain demo",
 		"--memory 512m --cpus 1", // db limits (0.5 cpus rounds up to whole CPU)
 		"--memory 256m",            // redis limit
 		"container build -t demo-api -f Dockerfile",
-		"--name api --network demo_default",
+		"--name api.demo --network demo_default --dns-domain demo",
 		"--memory 512m --cpus 1", // api limits
 		"--publish 8080:3000",
 	)
 
 	// Dependency order: db and redis must start before api.
-	if idx(out, "--name api ") < idx(out, "--name db ") {
+	if idx(out, "--name api.demo ") < idx(out, "--name db.demo ") {
 		t.Fatal("api started before its dependency db")
 	}
 }
@@ -83,7 +83,7 @@ func TestLogs_DryRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if !strings.Contains(out, "container logs api") {
+	if !strings.Contains(out, "container logs api.demo") {
 		t.Fatalf("logs output = %q", out)
 	}
 }
@@ -93,7 +93,7 @@ func TestExec_DryRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errOut)
 	}
-	if !strings.Contains(out, "container exec --tty --interactive db psql -U postgres") {
+	if !strings.Contains(out, "container exec --tty --interactive db.demo psql -U postgres") {
 		t.Fatalf("exec output = %q", out)
 	}
 }
@@ -104,7 +104,7 @@ func TestExec_DryRun_WithFlags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errOut)
 	}
-	if !strings.Contains(out, "container exec --detach --env K=V --workdir /app --user root db sh") {
+	if !strings.Contains(out, "container exec --detach --env K=V --workdir /app --user root db.demo sh") {
 		t.Fatalf("exec output = %q", out)
 	}
 }

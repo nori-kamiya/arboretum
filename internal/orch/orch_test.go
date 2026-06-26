@@ -131,8 +131,8 @@ func TestImageRef(t *testing.T) {
 }
 
 func TestContainerName(t *testing.T) {
-	if containerName(nil, "db") != "db" {
-		t.Fatal("container name should be the service name")
+	if got := containerName(&types.Project{Name: "demo"}, "db"); got != "db.demo" {
+		t.Fatalf("container name = %q, want db.demo", got)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestRunArgs_FullService(t *testing.T) {
 		Deploy:  limitFor(512<<20, 1),
 	}
 	got := strings.Join(runArgs(p, svc), " ")
-	want := "run --detach --name api --network demo_default " +
+	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
 		"--label orchard.project=demo --label orchard.service=api " +
 		"--memory 512m --cpus 1 --env A=1 --env B --publish 8080:3000 " +
 		"--volume data:/data myapi:latest node server.js"
@@ -211,7 +211,7 @@ func TestRunArgs_WorkdirUserEntrypointLabels(t *testing.T) {
 		Command:    types.ShellCommand{"start"},
 	}
 	got := strings.Join(runArgs(p, svc), " ")
-	want := "run --detach --name api --network demo_default " +
+	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
 		"--label orchard.project=demo --label orchard.service=api " +
 		"--workdir /srv --user node --entrypoint ./entry.sh " +
 		"--label com.example.team=core --label com.example.tier=web " +
@@ -238,6 +238,66 @@ func TestBuilder_ErrorPropagates(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 	if err := Builder(context.Background(), "stop"); err == nil {
 		t.Fatal("expected builder error")
+	}
+}
+
+// --- service DNS hint ------------------------------------------------------
+
+func TestHintServiceDNS(t *testing.T) {
+	var buf bytes.Buffer
+	backend.Stdout = &buf
+	backend.DryRun = false
+	t.Cleanup(func() { backend.Stdout = os.Stdout; backend.DryRun = false })
+
+	dnsList := func(domains string) func() {
+		return backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+			return []byte(domains), nil
+		})
+	}
+	two := &types.Project{Name: "demo", Services: types.Services{"a": {Name: "a"}, "b": {Name: "b"}}}
+	one := &types.Project{Name: "demo", Services: types.Services{"a": {Name: "a"}}}
+
+	// Missing domain + multi-service → hint.
+	restore := dnsList(`["other"]`)
+	hintServiceDNS(context.Background(), two)
+	restore()
+	if !strings.Contains(buf.String(), "sudo container system dns create demo") {
+		t.Fatalf("expected hint, got %q", buf.String())
+	}
+
+	// Domain exists → no hint.
+	buf.Reset()
+	restore = dnsList(`["demo"]`)
+	hintServiceDNS(context.Background(), two)
+	restore()
+	if buf.Len() != 0 {
+		t.Fatalf("no hint expected when domain exists, got %q", buf.String())
+	}
+
+	// Single service → no hint (and no lookup).
+	buf.Reset()
+	hintServiceDNS(context.Background(), one)
+	if buf.Len() != 0 {
+		t.Fatalf("no hint for single-service, got %q", buf.String())
+	}
+
+	// dns list errors → silent.
+	buf.Reset()
+	restore = backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("boom")
+	})
+	hintServiceDNS(context.Background(), two)
+	restore()
+	if buf.Len() != 0 {
+		t.Fatalf("errors should be silent, got %q", buf.String())
+	}
+
+	// dry-run → silent.
+	buf.Reset()
+	backend.DryRun = true
+	hintServiceDNS(context.Background(), two)
+	if buf.Len() != 0 {
+		t.Fatalf("dry-run should be silent, got %q", buf.String())
 	}
 }
 
@@ -364,7 +424,7 @@ func TestWaitHealthy_ShellForm(t *testing.T) {
 	t.Cleanup(swapSleep())
 	var sawShell bool
 	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
-		if strings.Join(args, " ") == "exec db sh -c curl -f localhost" {
+		if strings.Join(args, " ") == "exec db.demo sh -c curl -f localhost" {
 			sawShell = true
 		}
 		return nil, nil
@@ -484,7 +544,7 @@ func TestExec_DefaultAllocatesTTY(t *testing.T) {
 	out := captureDryRun(t, func() error {
 		return Exec(context.Background(), p, "db", ExecOptions{}, "psql", "-U", "postgres")
 	})
-	if strings.TrimSpace(out) != "container exec --tty --interactive db psql -U postgres" {
+	if strings.TrimSpace(out) != "container exec --tty --interactive db.demo psql -U postgres" {
 		t.Fatalf("exec cmd = %q", out)
 	}
 }
@@ -500,7 +560,7 @@ func TestExec_AllOptions(t *testing.T) {
 			User:    "root",
 		}, "sh", "-c", "echo hi")
 	})
-	want := "container exec --detach --env A=1 --env B=2 --workdir /tmp --user root db sh -c echo hi"
+	want := "container exec --detach --env A=1 --env B=2 --workdir /tmp --user root db.demo sh -c echo hi"
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("exec cmd = %q", out)
 	}
@@ -708,8 +768,8 @@ func TestUp_SkipsRunningStartsStopped(t *testing.T) {
 		switch {
 		case strings.HasPrefix(cmd, "ls --all"):
 			return []byte(`[
-				{"id":"db","status":{"state":"running"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}},
-				{"id":"api","status":{"state":"stopped"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"api"}}}
+				{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}},
+				{"id":"api.demo","status":{"state":"stopped"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"api"}}}
 			]`), nil
 		case strings.HasPrefix(cmd, "network list"):
 			return []byte("[]"), nil
@@ -726,7 +786,7 @@ func TestUp_SkipsRunningStartsStopped(t *testing.T) {
 	if err := Up(context.Background(), demoProject(), true); err != nil {
 		t.Fatal(err)
 	}
-	if len(started) != 1 || started[0] != "api" {
+	if len(started) != 1 || started[0] != "api.demo" {
 		t.Fatalf("want only the stopped service (api) started, got %v", started)
 	}
 }
@@ -736,7 +796,7 @@ func TestUp_StartStoppedErrorPropagates(t *testing.T) {
 		cmd := strings.Join(args, " ")
 		switch {
 		case strings.HasPrefix(cmd, "ls --all"):
-			return []byte(`[{"id":"db","status":{"state":"exited"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}}]`), nil
+			return []byte(`[{"id":"db.demo","status":{"state":"exited"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}}]`), nil
 		case strings.HasPrefix(cmd, "network list"):
 			return []byte("[]"), nil
 		case strings.HasPrefix(cmd, "start "):
@@ -868,12 +928,12 @@ func TestLogs_FollowAndNoFollow(t *testing.T) {
 	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
 
 	out := captureDryRun(t, func() error { return Logs(context.Background(), p, true) })
-	if strings.TrimSpace(out) != "container logs -f db" {
+	if strings.TrimSpace(out) != "container logs -f db.demo" {
 		t.Fatalf("follow logs = %q", out)
 	}
 
 	out = captureDryRun(t, func() error { return Logs(context.Background(), p, false) })
-	if strings.TrimSpace(out) != "container logs db" {
+	if strings.TrimSpace(out) != "container logs db.demo" {
 		t.Fatalf("no-follow logs = %q", out)
 	}
 }

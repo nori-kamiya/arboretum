@@ -159,6 +159,26 @@ type Container struct {
 	Raw    map[string]any
 }
 
+// DNSDomainExists reports whether a local DNS domain of the given name exists
+// (created via `sudo container system dns create`). Used to hint when
+// service-name resolution is available. Returns false under DryRun.
+func DNSDomainExists(ctx context.Context, name string) (bool, error) {
+	out, err := Output(ctx, "system", "dns", "list", "--format", "json")
+	if err != nil || len(out) == 0 {
+		return false, err
+	}
+	var domains []string
+	if err := json.Unmarshal(out, &domains); err != nil {
+		return false, fmt.Errorf("parse `container system dns list`: %w", err)
+	}
+	for _, d := range domains {
+		if d == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListByProject returns all containers (running or not) tagged with our project
 // label. Used by `down`/`ps` so we never rely on name conventions for cleanup.
 func ListByProject(ctx context.Context, project string) ([]Container, error) {

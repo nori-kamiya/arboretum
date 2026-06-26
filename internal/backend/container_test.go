@@ -203,6 +203,33 @@ func TestEnsureInstalled_MissingBinaryGuides(t *testing.T) {
 	}
 }
 
+func TestDNSDomainExists(t *testing.T) {
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return []byte(`["alpha","demo"]`), nil
+	})
+	if ok, err := DNSDomainExists(context.Background(), "demo"); err != nil || !ok {
+		t.Fatalf("want found, got %v %v", ok, err)
+	}
+	if ok, _ := DNSDomainExists(context.Background(), "missing"); ok {
+		t.Fatal("want not found")
+	}
+}
+
+func TestDNSDomainExists_EmptyErrorAndBadJSON(t *testing.T) {
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return nil, nil })
+	if ok, err := DNSDomainExists(context.Background(), "x"); ok || err != nil {
+		t.Fatalf("empty: %v %v", ok, err)
+	}
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return nil, errors.New("down") })
+	if _, err := DNSDomainExists(context.Background(), "x"); err == nil {
+		t.Fatal("want exec error")
+	}
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return []byte("not json"), nil })
+	if _, err := DNSDomainExists(context.Background(), "x"); err == nil {
+		t.Fatal("want parse error")
+	}
+}
+
 func TestListByProject_FiltersByLabel_MapForm(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
 		return []byte(`[

@@ -147,9 +147,12 @@ translations. JSON output is parsed from the real (nested) schema.
 
 Remaining gaps:
 
-- **Service-name DNS** — relies on naming the container after the service so
-  Apple's embedded DNS resolves short names. Assumes one project at a time;
-  cross-project name collisions are a known limitation.
+- **Service-name DNS** — containers are named `<service>.<project>` and run with
+  `--dns-domain <project>`, so they're unique per project (no cross-project
+  collisions). For services to reach each other by bare name, create the
+  project's local DNS domain once (admin):
+  `sudo container system dns create <project>` (`up` prints this hint when it's
+  missing). Without it, containers still run and talk by IP.
 - **Config changes on `up`** — an existing container is left as-is; `up` does not
   yet diff config to recreate it. Run `down` first to apply compose edits.
 - profiles, restart policies — phase 2+.

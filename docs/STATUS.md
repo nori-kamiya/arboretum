@@ -119,13 +119,16 @@ Priority order:
 4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty
    --interactive` by default, `-T` to disable). Verified against real
    `container exec` (env passthrough + command execution work).
-5. **Cross-project safety + service-name DNS** (verified design, see item 1).
-   Name containers `<service>.<project>`, run with `--dns-domain <project>`, and
-   require a one-time `sudo container system dns create <project>` (preflight +
-   instruct; orchard can't sudo). Bare `<service>` then resolves within the
-   project, and distinct project domains remove cross-project collisions — fixing
-   the one-project-at-a-time caveat in one move. Fall back to bare names (today's
-   behavior) when the domain is absent, so non-networked stacks still work.
+5. ~~**Cross-project safety + service-name DNS**~~ — DONE. Containers are named
+   `<service>.<project>` (`containerName`) and run with `--dns-domain <project>`.
+   This makes names unique per project (no collisions between stacks) AND, once
+   the user runs the one-time `sudo container system dns create <project>`,
+   registers each container so peers resolve the bare `<service>` via their shared
+   search domain. Safe without the domain (the flag/name are no-ops for DNS then);
+   `up` prints a hint (`hintServiceDNS`) telling multi-service projects how to
+   create the domain. Verified on the real runtime: `web` resolved bare `db`, and
+   names are project-scoped. (`service_completed_successfully` aside, this closes
+   the one-project-at-a-time caveat.)
 6. **`restart` policy** — ~~translate~~ NOT translatable: container 1.0.0 has no
    `--restart` and orchard is not a supervising daemon. `orch.restartPolicy`
    detects `restart:`/`deploy.restart_policy` and Up prints a one-line warning
@@ -138,7 +141,8 @@ Priority order:
 
 ## Known caveats (carried)
 
-- One project at a time (container names are unprefixed for DNS).
+- Service-name DNS needs a one-time `sudo container system dns create <project>`
+  (Apple requires admin to create the local domain; orchard can't automate it).
 - Bind-mount I/O performance for large codebases is unverified (orthogonal to
   orchard; the original colima concern).
 - `container` is young (v1.0) — keep using `--format json` and tolerant parsing.

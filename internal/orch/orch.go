@@ -22,6 +22,7 @@ func networkName(p *types.Project) string { return p.Name + "_default" }
 // Up builds (when needed), creates the network/volumes and starts every service
 // in dependency order. When detach is false it tails logs afterwards.
 func Up(ctx context.Context, p *types.Project, detach bool) error {
+	hintServiceDNS(ctx, p)
 	if err := backend.EnsureNetwork(ctx, networkName(p), p.Name); err != nil {
 		return err
 	}
@@ -279,6 +280,19 @@ func Builder(ctx context.Context, action string) error {
 	return backend.Run(ctx, "builder", action)
 }
 
+// hintServiceDNS prints a one-time hint when a multi-service project lacks its
+// local DNS domain, so the user knows how to enable service-name resolution. It
+// is best-effort and silent under dry-run / on any error.
+func hintServiceDNS(ctx context.Context, p *types.Project) {
+	if backend.DryRun || len(p.Services) < 2 {
+		return
+	}
+	if ok, err := backend.DNSDomainExists(ctx, p.Name); err != nil || ok {
+		return
+	}
+	fmt.Fprintf(backend.Stdout, "orchard: hint: run `sudo container system dns create %s` to let services reach each other by name\n", p.Name)
+}
+
 // restartPolicy returns a human description of a service's requested restart
 // policy (from `restart:` or `deploy.restart_policy`), or "" when none/no.
 func restartPolicy(svc types.ServiceConfig) string {
@@ -381,6 +395,11 @@ func runArgs(p *types.Project, svc types.ServiceConfig) []string {
 		"run", "--detach",
 		"--name", containerName(p, svc.Name),
 		"--network", networkName(p),
+		// Project name as the DNS domain: the container registers as
+		// "<service>.<project>" and peers (which share this search domain)
+		// resolve the bare "<service>" once the domain is created. Safe even when
+		// the domain is absent (the flag is a no-op then).
+		"--dns-domain", p.Name,
 		"--label", backend.LabelProject + "=" + p.Name,
 		"--label", backend.LabelService + "=" + svc.Name,
 	}
@@ -429,11 +448,14 @@ func runArgs(p *types.Project, svc types.ServiceConfig) []string {
 	return a
 }
 
-// containerName: we name the container after the service so Apple container's
-// embedded DNS resolves the short service name (e.g. "db") between containers.
-// Caveat: this assumes one project at a time; cross-project name collisions are
-// a known limitation tracked in the README.
-func containerName(_ *types.Project, service string) string { return service }
+// containerName scopes the container to its project as "<service>.<project>".
+// This (a) keeps names unique across projects — no collisions when two stacks
+// both define "db" — and (b) registers the container under the project's DNS
+// domain so peers resolve the bare "<service>" via their shared search domain
+// (requires a one-time `sudo container system dns create <project>`).
+func containerName(p *types.Project, service string) string {
+	return service + "." + p.Name
+}
 
 func imageRef(p *types.Project, svc types.ServiceConfig) string {
 	if svc.Image != "" {
