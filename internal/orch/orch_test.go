@@ -241,6 +241,43 @@ func TestBuilder_ErrorPropagates(t *testing.T) {
 	}
 }
 
+// --- restart policy --------------------------------------------------------
+
+func TestRestartPolicy(t *testing.T) {
+	if got := restartPolicy(types.ServiceConfig{Restart: "always"}); got != "always" {
+		t.Errorf("restart field = %q", got)
+	}
+	if got := restartPolicy(types.ServiceConfig{Restart: "no"}); got != "" {
+		t.Errorf("'no' should be empty, got %q", got)
+	}
+	dep := &types.DeployConfig{RestartPolicy: &types.RestartPolicy{Condition: "on-failure"}}
+	if got := restartPolicy(types.ServiceConfig{Deploy: dep}); got != "deploy.restart_policy: on-failure" {
+		t.Errorf("deploy policy = %q", got)
+	}
+	none := &types.DeployConfig{RestartPolicy: &types.RestartPolicy{Condition: "none"}}
+	if got := restartPolicy(types.ServiceConfig{Deploy: none}); got != "" {
+		t.Errorf("'none' should be empty, got %q", got)
+	}
+	if got := restartPolicy(types.ServiceConfig{}); got != "" {
+		t.Errorf("unset should be empty, got %q", got)
+	}
+}
+
+func TestUp_WarnsOnUnsupportedRestart(t *testing.T) {
+	var buf bytes.Buffer
+	backend.DryRun, backend.Stdout = true, &buf
+	t.Cleanup(func() { backend.DryRun, backend.Stdout = false, os.Stdout })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"web": {Name: "web", Image: "nginx", Restart: "always"},
+	}}
+	if err := Up(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `service "web" requests restart "always"`) {
+		t.Fatalf("missing restart warning:\n%s", buf.String())
+	}
+}
+
 // --- healthcheck -----------------------------------------------------------
 
 func hcService(name string, test types.HealthCheckTest, retries uint64) types.ServiceConfig {

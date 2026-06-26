@@ -126,7 +126,12 @@ Priority order:
    project, and distinct project domains remove cross-project collisions — fixing
    the one-project-at-a-time caveat in one move. Fall back to bare names (today's
    behavior) when the domain is absent, so non-networked stacks still work.
-6. profiles, `restart` policy, `compose.override.yaml`.
+6. **`restart` policy** — ~~translate~~ NOT translatable: container 1.0.0 has no
+   `--restart` and orchard is not a supervising daemon. `orch.restartPolicy`
+   detects `restart:`/`deploy.restart_policy` and Up prints a one-line warning
+   that it's ignored (verified), rather than silently dropping it. Revisit if the
+   runtime adds restart support.
+7. profiles, `compose.override.yaml`.
 
 ## Known caveats (carried)
 

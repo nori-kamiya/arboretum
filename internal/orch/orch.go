@@ -69,6 +69,11 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 				return fmt.Errorf("waiting for %s to be healthy: %w", dep, err)
 			}
 		}
+		if pol := restartPolicy(svc); pol != "" {
+			// Apple container has no restart policy and orchard is not a daemon,
+			// so we can't honor it — warn rather than silently drop it.
+			fmt.Fprintf(backend.Stdout, "orchard: warning: service %q requests restart %q, which Apple container does not support; ignoring\n", name, pol)
+		}
 		if svc.Image == "" && svc.Build != nil {
 			if err := build(ctx, p, svc); err != nil {
 				return fmt.Errorf("build %s: %w", name, err)
@@ -272,6 +277,20 @@ func Exec(ctx context.Context, p *types.Project, service string, opts ExecOption
 // into up/down.
 func Builder(ctx context.Context, action string) error {
 	return backend.Run(ctx, "builder", action)
+}
+
+// restartPolicy returns a human description of a service's requested restart
+// policy (from `restart:` or `deploy.restart_policy`), or "" when none/no.
+func restartPolicy(svc types.ServiceConfig) string {
+	if svc.Restart != "" && svc.Restart != "no" {
+		return svc.Restart
+	}
+	if svc.Deploy != nil && svc.Deploy.RestartPolicy != nil {
+		if c := svc.Deploy.RestartPolicy.Condition; c != "" && c != "none" {
+			return "deploy.restart_policy: " + c
+		}
+	}
+	return ""
 }
 
 // sleepFn is the seam for health-poll delays; tests swap it out.
