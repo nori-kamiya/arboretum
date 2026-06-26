@@ -232,9 +232,27 @@ func EnsureVolume(ctx context.Context, name, project string) error {
 
 // Label keys used to track resources we own.
 const (
-	LabelProject = "arboretum.project"
-	LabelService = "arboretum.service"
+	LabelProject    = "arboretum.project"
+	LabelService    = "arboretum.service"
+	LabelConfigHash = "arboretum.config-hash"
 )
+
+// ContainerState returns a container's runtime state (e.g. "running",
+// "stopped") via `container inspect`, or "" when it doesn't exist.
+func ContainerState(ctx context.Context, name string) (string, error) {
+	out, err := Output(ctx, "inspect", name)
+	if err != nil || len(out) == 0 {
+		return "", err
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(out, &arr); err != nil {
+		return "", fmt.Errorf("parse `container inspect`: %w", err)
+	}
+	if len(arr) == 0 {
+		return "", nil
+	}
+	return stateOf(arr[0]), nil
+}
 
 // resolveConfig returns the nested "configuration" object when present (where
 // Apple container keeps labels/id), falling back to the map itself so flatter

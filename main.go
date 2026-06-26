@@ -91,30 +91,37 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		Short: "Create and start services",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			detach, _ := cmd.Flags().GetBool("detach")
+			force, _ := cmd.Flags().GetBool("force-recreate")
 			p, err := load(cmd.Context())
 			if err != nil {
 				return err
 			}
-			return orch.Up(cmd.Context(), p, detach)
+			return orch.Up(cmd.Context(), p, detach, force)
 		},
 	}
 	up.Flags().BoolP("detach", "d", false, "run in the background")
+	up.Flags().Bool("force-recreate", false, "recreate containers even if their config is unchanged")
 
 	down := &cobra.Command{
 		Use:   "down",
 		Short: "Stop and remove containers and the network",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts := orch.DownOptions{}
+			opts.Volumes, _ = cmd.Flags().GetBool("volumes")
+			opts.RemoveOrphans, _ = cmd.Flags().GetBool("remove-orphans")
 			prune, _ := cmd.Flags().GetBool("prune-builder")
 			p, err := load(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if err := orch.Down(cmd.Context(), p); err != nil || !prune {
+			if err := orch.Down(cmd.Context(), p, opts); err != nil || !prune {
 				return err
 			}
 			return orch.Builder(cmd.Context(), "stop")
 		},
 	}
+	down.Flags().BoolP("volumes", "v", false, "also remove named volumes")
+	down.Flags().Bool("remove-orphans", false, "remove containers for services not in the compose file")
 	down.Flags().Bool("prune-builder", false, "also stop the shared image builder after teardown")
 
 	ps := &cobra.Command{
@@ -150,6 +157,29 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	stop := mkLifecycle("stop", "Stop containers without removing them", orch.Stop)
 	start := mkLifecycle("start", "Start existing containers", orch.Start)
 	restart := mkLifecycle("restart", "Restart containers", orch.Restart)
+	build := mkLifecycle("build", "Build images for services with a build section", orch.BuildAll)
+	pull := mkLifecycle("pull", "Pull images for services", orch.Pull)
+
+	runCmd := &cobra.Command{
+		Use:   "run [flags] SERVICE [COMMAND [ARG...]]",
+		Short: "Run a one-off container for a service",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := orch.RunOptions{}
+			opts.Detach, _ = cmd.Flags().GetBool("detach")
+			opts.NoTTY, _ = cmd.Flags().GetBool("no-TTY")
+			opts.Env, _ = cmd.Flags().GetStringArray("env")
+			p, err := load(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return orch.RunOneOff(cmd.Context(), p, args[0], opts, args[1:]...)
+		},
+	}
+	runCmd.Flags().SetInterspersed(false) // pass flags after SERVICE to the command
+	runCmd.Flags().BoolP("detach", "d", false, "run in the background")
+	runCmd.Flags().BoolP("no-TTY", "T", false, "disable pseudo-TTY allocation")
+	runCmd.Flags().StringArrayP("env", "e", nil, "set environment variables (repeatable)")
 
 	config := &cobra.Command{
 		Use:   "config",
@@ -247,6 +277,6 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		mkBuilder("delete", "Delete the builder"),
 	)
 
-	root.AddCommand(up, down, ps, logs, exec, stop, start, restart, config, builder, versionCmd)
+	root.AddCommand(up, down, ps, logs, exec, stop, start, restart, build, pull, runCmd, config, builder, versionCmd)
 	return root
 }

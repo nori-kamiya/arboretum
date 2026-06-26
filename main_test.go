@@ -161,6 +161,36 @@ func TestConfig_DryRun(t *testing.T) {
 	}
 }
 
+func TestNewCommands_DryRun(t *testing.T) {
+	cases := [][]string{
+		{"up", "-d", "--force-recreate", "--dry-run", "-f", composeFile},
+		{"down", "-v", "--remove-orphans", "--dry-run", "-f", composeFile},
+		{"build", "--dry-run", "-f", composeFile},
+		{"pull", "--dry-run", "-f", composeFile},
+		{"run", "--dry-run", "-f", composeFile, "db", "echo", "hi"},
+	}
+	for _, args := range cases {
+		code, _, errOut := runCLI(args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d, stderr=%s", args, code, errOut)
+		}
+	}
+}
+
+func TestRun_MissingService(t *testing.T) {
+	code, _, _ := runCLI("run", "--dry-run", "-f", composeFile)
+	if code != 1 {
+		t.Fatalf("run with no service: exit = %d, want 1", code)
+	}
+}
+
+func TestRun_LoadError(t *testing.T) {
+	code, _, errOut := runCLI("run", "--dry-run", "-f", "no-such-file.yaml", "db")
+	if code != 1 || !strings.Contains(errOut, "arboretum:") {
+		t.Fatalf("exit=%d stderr=%q", code, errOut)
+	}
+}
+
 func TestEachCommand_LoadError(t *testing.T) {
 	for _, sub := range []string{"up", "down", "ps", "logs", "stop", "start", "restart", "config"} {
 		code, _, errOut := runCLI(sub, "--dry-run", "-f", "no-such-file.yaml")

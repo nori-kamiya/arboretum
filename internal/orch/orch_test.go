@@ -193,7 +193,8 @@ func TestRunArgs_FullService(t *testing.T) {
 	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
 		"--label arboretum.project=demo --label arboretum.service=api " +
 		"--memory 512m --cpus 1 --env A=1 --env B --publish 8080:3000 " +
-		"--volume data:/data myapi:latest node server.js"
+		"--volume data:/data --label arboretum.config-hash=" + configHash(p, svc) +
+		" myapi:latest node server.js"
 	if got != want {
 		t.Fatalf("runArgs mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -215,7 +216,8 @@ func TestRunArgs_WorkdirUserEntrypointLabels(t *testing.T) {
 		"--label arboretum.project=demo --label arboretum.service=api " +
 		"--workdir /srv --user node --entrypoint ./entry.sh " +
 		"--label com.example.team=core --label com.example.tier=web " +
-		"myapi:latest --flag x start"
+		"--label arboretum.config-hash=" + configHash(p, svc) +
+		" myapi:latest --flag x start"
 	if got != want {
 		t.Fatalf("runArgs mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -330,7 +332,7 @@ func TestUp_WarnsOnUnsupportedRestart(t *testing.T) {
 	p := &types.Project{Name: "demo", Services: types.Services{
 		"web": {Name: "web", Image: "nginx", Restart: "always"},
 	}}
-	if err := Up(context.Background(), p, true); err != nil {
+	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `service "web" requests restart "always"`) {
@@ -461,7 +463,7 @@ func TestUp_HealthyDependencyNeverReady(t *testing.T) {
 		"db":  {Name: "db", Image: "postgres", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}, Retries: &retries}},
 		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}},
 	}}
-	if err := Up(context.Background(), p, true); err == nil {
+	if err := Up(context.Background(), p, true, false); err == nil {
 		t.Fatal("expected Up to fail when dependency never becomes healthy")
 	}
 }
@@ -483,7 +485,7 @@ func TestUp_StartedConditionSkipsHealthWait(t *testing.T) {
 		"db":  {Name: "db", Image: "postgres"},
 		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionStarted}}},
 	}}
-	if err := Up(context.Background(), p, true); err != nil {
+	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -529,7 +531,7 @@ func TestUp_WaitsForHealthyDependency(t *testing.T) {
 		"db":  {Name: "db", Image: "postgres", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}}},
 		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}},
 	}}
-	if err := Up(context.Background(), p, true); err != nil {
+	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if !sawExec || !sawWebRun {
@@ -680,7 +682,7 @@ func demoProject() *types.Project {
 }
 
 func TestUp_DetachedEmitsFullPipeline(t *testing.T) {
-	out := captureDryRun(t, func() error { return Up(context.Background(), demoProject(), true) })
+	out := captureDryRun(t, func() error { return Up(context.Background(), demoProject(), true, false) })
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	wantPrefixes := []string{
 		"container network create",
@@ -701,7 +703,7 @@ func TestUp_DetachedEmitsFullPipeline(t *testing.T) {
 }
 
 func TestUp_AttachedTailsLogs(t *testing.T) {
-	out := captureDryRun(t, func() error { return Up(context.Background(), demoProject(), false) })
+	out := captureDryRun(t, func() error { return Up(context.Background(), demoProject(), false, false) })
 	if !strings.Contains(out, "container logs -f api") || !strings.Contains(out, "container logs -f db") {
 		t.Fatalf("attached up should tail logs, got:\n%s", out)
 	}
@@ -733,28 +735,28 @@ func failOn(t *testing.T, substr string) {
 
 func TestUp_NetworkErrorPropagates(t *testing.T) {
 	failOn(t, "network create")
-	if err := Up(context.Background(), demoProject(), true); err == nil {
+	if err := Up(context.Background(), demoProject(), true, false); err == nil {
 		t.Fatal("expected network error")
 	}
 }
 
 func TestUp_VolumeErrorPropagates(t *testing.T) {
 	failOn(t, "volume create")
-	if err := Up(context.Background(), demoProject(), true); err == nil {
+	if err := Up(context.Background(), demoProject(), true, false); err == nil {
 		t.Fatal("expected volume error")
 	}
 }
 
 func TestUp_BuildErrorPropagates(t *testing.T) {
 	failOn(t, "build")
-	if err := Up(context.Background(), demoProject(), true); err == nil {
+	if err := Up(context.Background(), demoProject(), true, false); err == nil {
 		t.Fatal("expected build error")
 	}
 }
 
 func TestUp_RunErrorPropagates(t *testing.T) {
 	failOn(t, "run --detach --name db")
-	if err := Up(context.Background(), demoProject(), true); err == nil {
+	if err := Up(context.Background(), demoProject(), true, false); err == nil {
 		t.Fatal("expected run error")
 	}
 }
@@ -762,28 +764,31 @@ func TestUp_RunErrorPropagates(t *testing.T) {
 // up is idempotent: a running container is left alone, a stopped one is
 // (re)started, and an absent one is created.
 func TestUp_SkipsRunningStartsStopped(t *testing.T) {
+	p := demoProject()
+	hDb := configHash(p, p.Services["db"])
+	hAPI := configHash(p, p.Services["api"])
 	var started []string
 	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
 		cmd := strings.Join(args, " ")
 		switch {
 		case strings.HasPrefix(cmd, "ls --all"):
 			return []byte(`[
-				{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db"}}},
-				{"id":"api.demo","status":{"state":"stopped"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"api"}}}
+				{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db","arboretum.config-hash":"` + hDb + `"}}},
+				{"id":"api.demo","status":{"state":"stopped"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"api","arboretum.config-hash":"` + hAPI + `"}}}
 			]`), nil
 		case strings.HasPrefix(cmd, "network list"):
 			return []byte("[]"), nil
 		case strings.HasPrefix(cmd, "start "):
 			started = append(started, args[1])
 		case strings.HasPrefix(cmd, "build ") || strings.HasPrefix(cmd, "run "):
-			t.Errorf("must not build/recreate an existing container: %q", cmd)
+			t.Errorf("must not recreate an unchanged container: %q", cmd)
 		}
 		return nil, nil
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 
-	if err := Up(context.Background(), demoProject(), true); err != nil {
+	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(started) != 1 || started[0] != "api.demo" {
@@ -792,11 +797,13 @@ func TestUp_SkipsRunningStartsStopped(t *testing.T) {
 }
 
 func TestUp_StartStoppedErrorPropagates(t *testing.T) {
+	p := demoProject()
+	hDb := configHash(p, p.Services["db"])
 	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
 		cmd := strings.Join(args, " ")
 		switch {
 		case strings.HasPrefix(cmd, "ls --all"):
-			return []byte(`[{"id":"db.demo","status":{"state":"exited"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db"}}}]`), nil
+			return []byte(`[{"id":"db.demo","status":{"state":"exited"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db","arboretum.config-hash":"` + hDb + `"}}}]`), nil
 		case strings.HasPrefix(cmd, "network list"):
 			return []byte("[]"), nil
 		case strings.HasPrefix(cmd, "start "):
@@ -806,8 +813,53 @@ func TestUp_StartStoppedErrorPropagates(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	if err := Up(context.Background(), demoProject(), true); err == nil {
+	if err := Up(context.Background(), p, true, false); err == nil {
 		t.Fatal("expected start error")
+	}
+}
+
+func TestUp_RecreatesOnConfigChangeAndForce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		hash  string // stored config-hash on the existing container
+		force bool
+	}{
+		{"config changed", "stale-hash", false},
+		{"force recreate", "", true}, // hash filled with the real one below
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := demoProject()
+			storedHash := tc.hash
+			if storedHash == "" {
+				storedHash = configHash(p, p.Services["db"])
+			}
+			var stopped, removed, ran bool
+			t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+				cmd := strings.Join(args, " ")
+				switch {
+				case strings.HasPrefix(cmd, "ls --all"):
+					return []byte(`[{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db","arboretum.config-hash":"` + storedHash + `"}}}]`), nil
+				case strings.HasPrefix(cmd, "network list"):
+					return []byte("[]"), nil
+				case cmd == "stop db.demo":
+					stopped = true
+				case cmd == "rm db.demo":
+					removed = true
+				case strings.Contains(cmd, "--name db.demo"):
+					ran = true
+				}
+				return nil, nil
+			}))
+			backend.DryRun = false
+			t.Cleanup(func() { backend.DryRun = false })
+
+			if err := Up(context.Background(), p, true, tc.force); err != nil {
+				t.Fatal(err)
+			}
+			if !stopped || !removed || !ran {
+				t.Fatalf("expected recreate (stop=%v rm=%v run=%v)", stopped, removed, ran)
+			}
+		})
 	}
 }
 
@@ -824,7 +876,7 @@ func TestUp_ListExistingErrorPropagates(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	if err := Up(context.Background(), demoProject(), true); err == nil {
+	if err := Up(context.Background(), demoProject(), true, false); err == nil {
 		t.Fatal("expected list error")
 	}
 }
@@ -835,7 +887,7 @@ func TestUp_TopoErrorPropagates(t *testing.T) {
 		"a": {Name: "a", DependsOn: dep("b")},
 		"b": {Name: "b", DependsOn: dep("a")},
 	}}
-	if err := Up(context.Background(), p, true); err == nil {
+	if err := Up(context.Background(), p, true, false); err == nil {
 		t.Fatal("expected topo cycle error")
 	}
 }
@@ -855,7 +907,8 @@ func TestDown_StopsRemovesAndDeletesNetwork(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 
-	if err := Down(context.Background(), &types.Project{Name: "demo"}); err != nil {
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	if err := Down(context.Background(), p, DownOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(calls, "|")
@@ -872,7 +925,7 @@ func TestDown_ListErrorPropagates(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	if err := Down(context.Background(), &types.Project{Name: "demo"}); err == nil {
+	if err := Down(context.Background(), &types.Project{Name: "demo"}, DownOptions{}); err == nil {
 		t.Fatal("expected list error")
 	}
 }
@@ -1044,6 +1097,241 @@ func TestForEachContainer_Errors(t *testing.T) {
 	}))
 	if err := Start(context.Background(), &types.Project{Name: "demo"}); err == nil {
 		t.Fatal("expected action error")
+	}
+}
+
+// --- down options / build / pull / run / completed -------------------------
+
+func TestDown_VolumesAndOrphans(t *testing.T) {
+	// db is defined; ghost is an orphan (service not in the project).
+	lsJSON := `[
+		{"id":"db.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db"}}},
+		{"id":"ghost.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"ghost"}}}
+	]`
+	run := func(opts DownOptions) (string, string) {
+		var calls []string
+		var buf bytes.Buffer
+		backend.Stdout = &buf
+		restore := backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+			cmd := strings.Join(args, " ")
+			if strings.HasPrefix(cmd, "ls --all") {
+				return []byte(lsJSON), nil
+			}
+			calls = append(calls, cmd)
+			return nil, nil
+		})
+		backend.DryRun = false
+		p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}, Volumes: types.Volumes{"data": {}}}
+		err := Down(context.Background(), p, opts)
+		restore()
+		backend.Stdout = os.Stdout
+		backend.DryRun = false
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(calls, "|"), buf.String()
+	}
+
+	// Default: db removed, ghost kept (warned), no volume delete.
+	calls, warn := run(DownOptions{})
+	if !strings.Contains(calls, "stop db.demo") || strings.Contains(calls, "ghost") {
+		t.Fatalf("default down calls = %q", calls)
+	}
+	if !strings.Contains(warn, "orphan container ghost.demo") {
+		t.Fatalf("expected orphan warning, got %q", warn)
+	}
+	// --remove-orphans + --volumes.
+	calls, _ = run(DownOptions{RemoveOrphans: true, Volumes: true})
+	for _, want := range []string{"stop ghost.demo", "rm ghost.demo", "volume delete data"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("calls %q missing %q", calls, want)
+		}
+	}
+}
+
+func TestBuildAll(t *testing.T) {
+	var built []string
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if args[0] == "build" {
+			built = append(built, "built")
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"api": {Name: "api", Build: &types.BuildConfig{Context: "."}},
+		"db":  {Name: "db", Image: "postgres"}, // no build → skipped
+	}}
+	if err := BuildAll(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if len(built) != 1 {
+		t.Fatalf("want 1 build, got %d", len(built))
+	}
+}
+
+func TestBuildAll_Error(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("build fail")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"api": {Name: "api", Build: &types.BuildConfig{Context: "."}}}}
+	if err := BuildAll(context.Background(), p); err == nil {
+		t.Fatal("expected build error")
+	}
+}
+
+func TestPull(t *testing.T) {
+	var pulled []string
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "image" && args[1] == "pull" {
+			pulled = append(pulled, args[2])
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db":  {Name: "db", Image: "postgres:16"},
+		"api": {Name: "api", Build: &types.BuildConfig{Context: "."}}, // no image → skipped
+	}}
+	if err := Pull(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if len(pulled) != 1 || pulled[0] != "postgres:16" {
+		t.Fatalf("pulled = %v", pulled)
+	}
+}
+
+func TestPull_Error(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("pull fail")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db", Image: "x"}}}
+	if err := Pull(context.Background(), p); err == nil {
+		t.Fatal("expected pull error")
+	}
+}
+
+func TestRunOneOff(t *testing.T) {
+	v := "1"
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"web": {Name: "web", Image: "nginx", Environment: types.MappingWithEquals{"A": &v, "NOVAL": nil}},
+	}}
+	out := captureDryRun(t, func() error {
+		return RunOneOff(context.Background(), p, "web", RunOptions{Env: []string{"B=2"}}, "sh", "-c", "echo hi")
+	})
+	want := "container run --rm --tty --interactive --network demo_default --dns-domain demo --env A=1 --env NOVAL --env B=2 nginx sh -c echo hi"
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("run = %q", out)
+	}
+
+	// Detached + default command (no override).
+	out = captureDryRun(t, func() error {
+		return RunOneOff(context.Background(), p, "web", RunOptions{Detach: true})
+	})
+	if !strings.Contains(out, "--detach") || strings.Contains(out, "--tty") {
+		t.Fatalf("detached run = %q", out)
+	}
+
+	if err := RunOneOff(context.Background(), p, "ghost", RunOptions{}); err == nil {
+		t.Fatal("expected unknown-service error")
+	}
+}
+
+func TestWaitCompleted(t *testing.T) {
+	t.Cleanup(swapSleep())
+	calls := 0
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		calls++
+		if calls < 2 {
+			return []byte(`[{"status":{"state":"running"}}]`), nil
+		}
+		return []byte(`[{"status":{"state":"stopped"}}]`), nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"job": {Name: "job"}}}
+	if err := waitCompleted(context.Background(), p, "job"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWaitCompleted_ErrorAndCancel(t *testing.T) {
+	t.Cleanup(swapSleep())
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("inspect fail")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"job": {Name: "job"}}}
+	if err := waitCompleted(context.Background(), p, "job"); err == nil {
+		t.Fatal("expected inspect error")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitCompleted(ctx, p, "job"); err == nil {
+		t.Fatal("expected context error")
+	}
+}
+
+func TestUp_WaitsForCompletedDependency(t *testing.T) {
+	t.Cleanup(swapSleep())
+	var sawInspect, sawWebRun bool
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "network list"), strings.HasPrefix(cmd, "ls --all"):
+			return []byte("[]"), nil
+		case strings.HasPrefix(cmd, "inspect migrate.demo"):
+			sawInspect = true
+			return []byte(`[{"status":{"state":"stopped"}}]`), nil
+		case strings.Contains(cmd, "--name web.demo"):
+			if !sawInspect {
+				t.Error("web started before migrate completed")
+			}
+			sawWebRun = true
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"migrate": {Name: "migrate", Image: "migrate"},
+		"web":     {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"migrate": {Condition: types.ServiceConditionCompletedSuccessfully}}},
+	}}
+	if err := Up(context.Background(), p, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if !sawInspect || !sawWebRun {
+		t.Fatalf("inspect=%v webRun=%v", sawInspect, sawWebRun)
+	}
+}
+
+func TestUp_CompletedDependencyError(t *testing.T) {
+	t.Cleanup(swapSleep())
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "network list") || strings.HasPrefix(cmd, "ls --all") {
+			return []byte("[]"), nil
+		}
+		if strings.HasPrefix(cmd, "inspect") {
+			return nil, errors.New("inspect fail")
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"migrate": {Name: "migrate", Image: "migrate"},
+		"web":     {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"migrate": {Condition: types.ServiceConditionCompletedSuccessfully}}},
+	}}
+	if err := Up(context.Background(), p, true, false); err == nil {
+		t.Fatal("expected completed-dependency error")
 	}
 }
 

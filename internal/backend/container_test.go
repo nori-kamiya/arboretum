@@ -203,6 +203,34 @@ func TestEnsureInstalled_MissingBinaryGuides(t *testing.T) {
 	}
 }
 
+func TestContainerState(t *testing.T) {
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return []byte(`[{"id":"x","status":{"state":"running"}}]`), nil
+	})
+	if st, err := ContainerState(context.Background(), "x"); err != nil || st != "running" {
+		t.Fatalf("got %q %v", st, err)
+	}
+}
+
+func TestContainerState_EmptyErrorBadJSON(t *testing.T) {
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return nil, nil })
+	if st, err := ContainerState(context.Background(), "x"); st != "" || err != nil {
+		t.Fatalf("empty: %q %v", st, err)
+	}
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return nil, errors.New("boom") })
+	if _, err := ContainerState(context.Background(), "x"); err == nil {
+		t.Fatal("want exec error")
+	}
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return []byte("nope"), nil })
+	if _, err := ContainerState(context.Background(), "x"); err == nil {
+		t.Fatal("want parse error")
+	}
+	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) { return []byte("[]"), nil })
+	if st, err := ContainerState(context.Background(), "x"); st != "" || err != nil {
+		t.Fatalf("empty array: %q %v", st, err)
+	}
+}
+
 func TestDNSDomainExists(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
 		return []byte(`["alpha","demo"]`), nil

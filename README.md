@@ -70,19 +70,30 @@ Verify with `arboretum version`.
 `arbo up -d`). The examples below use the long form.
 
 ```sh
-arboretum up -d            # build, create network/volumes, start in dep order
-arboretum ps               # table: SERVICE / NAME / STATE / PORTS
-arboretum ps -q            # names only;  ps --format json for scripting
-arboretum logs --follow    # tail logs (colored, per-service prefixes)
-arboretum exec db psql     # run a command in a running service container
+arboretum up -d                # build, create network/volumes, start in dep order
+arboretum up --force-recreate  # recreate even if config is unchanged
+arboretum ps                   # table: SERVICE / NAME / STATE / PORTS
+arboretum ps -q                # names only;  ps --format json for scripting
+arboretum logs --follow        # tail logs (colored, per-service prefixes)
+arboretum exec db psql         # run a command in a running service container
+arboretum run web sh           # one-off throwaway container for a service
 arboretum stop|start|restart   # operate on existing containers (no teardown)
-arboretum config           # print the resolved compose (--services, --format json)
-arboretum down             # stop + remove containers and the network
+arboretum build | pull         # build images / pull images, without starting
+arboretum config               # print the resolved compose (--services, --format json)
+arboretum down -v              # stop + remove containers, network, and volumes
 ```
+
+`up` is idempotent: unchanged containers are left running, stopped ones are
+restarted, and a service whose config changed is recreated automatically (its
+config-hash differs); `--force-recreate` recreates regardless. `down` keeps
+containers for services no longer in the file unless you pass `--remove-orphans`.
 
 Flags: `-f/--file` (repeatable), `-p/--project-name`, `--profile` (repeatable),
 `--dry-run`. `compose.override.yaml` and multiple `-f` files are merged as in
 Docker Compose.
+
+Shell completion is built in (cobra): `arboretum completion zsh > ...` (also
+`bash`, `fish`, `powershell`).
 
 ### Builder management
 
@@ -141,8 +152,9 @@ Optional Homebrew tap publishing (`brew install nori-kamiya/tap/arboretum`) is
 pre-wired but commented out in `.goreleaser.yaml`; enable it once you've created
 a `homebrew-tap` repo and a `HOMEBREW_TAP_GITHUB_TOKEN` secret.
 
-> **Note:** a `LICENSE` file isn't in the repo yet — add one before a public
-> release (Homebrew formulae and most downstreams expect it).
+## License
+
+[MIT](LICENSE).
 
 ## Status & known gaps
 

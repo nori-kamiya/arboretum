@@ -11,12 +11,14 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
 
 ## Current state (Phase 1 / MVP — DONE; Phase 2 in progress)
 
-- Commands: `up` (`-d`, per-service ✔ summary), `down` (`--prune-builder`),
+- Commands: `up` (`-d`, `--force-recreate`, config-diff auto-recreate, per-service
+  ✔ summary), `down` (`-v`, `--remove-orphans`, `--prune-builder`),
   `ps` (table SERVICE/NAME/STATE/PORTS, `-q`, `--format json`), `logs`
   (`--follow`), `exec` (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via
-  non-interspersed flags), `stop`/`start`/`restart` (operate on existing
-  containers by label), `config` (`--services`, `--format json`), and
+  non-interspersed flags), `run` (one-off, `-d`/`-T`/`-e`), `stop`/`start`/
+  `restart`, `build`/`pull`, `config` (`--services`, `--format json`), and
   `builder` (`status`/`start`/`stop`/`delete`) wrapping `container builder`.
+  Shell completion via cobra's built-in `completion`.
   `builder` is a deliberate superset (its own namespace, like `docker compose`
   vs `docker builder`) so compose compatibility is preserved; `down` stays
   compose-pure unless `--prune-builder` is passed. Verified on the real runtime.
@@ -38,10 +40,10 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
   (`.goreleaser.yaml`, darwin arm64+amd64 archives + checksums), GitHub Actions
   (`ci.yml` = vet + 100% coverage gate + `goreleaser check`; `release.yml` =
   publish on `v*` tag with the default token), `Makefile`, and `install.sh`.
-  Verified end-to-end locally via `goreleaser release --snapshot` (produces a
-  working arm64 binary with version baked in). Releasing steps in README.
-  Open item before a public release: add a `LICENSE` file (and then the
-  Homebrew tap block in `.goreleaser.yaml` can be enabled).
+  Verified end-to-end locally via `goreleaser release --snapshot` (produces
+  working `arboretum`+`arbo` binaries with version baked in). `LICENSE` (MIT) is
+  in the repo and shipped in archives. Remaining for a public release: tag + push
+  (and optionally enable the Homebrew tap block in `.goreleaser.yaml`).
 
 Sanity check after pulling:
 
@@ -118,7 +120,9 @@ Priority order:
    legacy), polling with the compose interval/retries/start_period before
    starting a `service_healthy` dependent. Verified on the real runtime: a
    dependent waited for its dependency's healthcheck to pass before starting.
-   (`service_completed_successfully` not yet handled.)
+   `service_completed_successfully` is also handled now (`waitCompleted` polls
+   `container inspect` until the dependency exits; note container 1.0.0 doesn't
+   expose the exit code, so it confirms exit but not exit 0).
 4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty
    --interactive` by default, `-T` to disable). Verified against real
    `container exec` (env passthrough + command execution work).

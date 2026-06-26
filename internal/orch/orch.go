@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"math"
 	"sort"
@@ -23,7 +24,7 @@ func networkName(p *types.Project) string { return p.Name + "_default" }
 
 // Up builds (when needed), creates the network/volumes and starts every service
 // in dependency order. When detach is false it tails logs afterwards.
-func Up(ctx context.Context, p *types.Project, detach bool) error {
+func Up(ctx context.Context, p *types.Project, detach, forceRecreate bool) error {
 	hintServiceDNS(ctx, p)
 	if err := backend.EnsureNetwork(ctx, networkName(p), p.Name); err != nil {
 		return err
@@ -34,17 +35,18 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 		}
 	}
 
-	// Existing containers make `up` idempotent: a running one is left alone and a
-	// stopped one is restarted, rather than failing on a name collision. (We do
-	// not yet diff config to recreate on change — a known limitation; `down`
-	// first to apply edits.)
+	// Existing containers make `up` idempotent: an unchanged running one is left
+	// alone, a stopped one is restarted, and one whose config changed (different
+	// config-hash) — or all, under --force-recreate — is recreated.
 	existing, err := backend.ListByProject(ctx, p.Name)
 	if err != nil {
 		return err
 	}
 	state := make(map[string]string, len(existing))
+	hashes := make(map[string]string, len(existing))
 	for _, c := range existing {
 		state[c.Name] = c.State
+		hashes[c.Name] = c.Labels[backend.LabelConfigHash]
 	}
 
 	order, err := topoSort(p)
@@ -55,25 +57,36 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 	for _, name := range order {
 		svc := p.Services[name]
 		cname := containerName(p, name)
+		recreated := false
 		if st, ok := state[cname]; ok {
-			if st != "running" {
-				if err := backend.Run(ctx, "start", cname); err != nil {
-					return fmt.Errorf("start %s: %w", name, err)
+			if !forceRecreate && hashes[cname] == configHash(p, svc) {
+				if st != "running" {
+					if err := backend.Run(ctx, "start", cname); err != nil {
+						return fmt.Errorf("start %s: %w", name, err)
+					}
+					summary[name] = "started"
+				} else {
+					summary[name] = "running"
 				}
-				summary[name] = "started"
-			} else {
-				summary[name] = "running"
-			}
-			continue
-		}
-		// Honor `depends_on: condition: service_healthy` before creating svc.
-		// Topological order guarantees the dependency is already running.
-		for _, dep := range sortedKeys(svc.DependsOn) {
-			if svc.DependsOn[dep].Condition != types.ServiceConditionHealthy {
 				continue
 			}
-			if err := waitHealthy(ctx, p, dep); err != nil {
-				return fmt.Errorf("waiting for %s to be healthy: %w", dep, err)
+			// Config changed (or forced): drop the old container, recreate below.
+			_ = backend.Run(ctx, "stop", cname)
+			_ = backend.Run(ctx, "rm", cname)
+			recreated = true
+		}
+		// Honor depends_on conditions before creating svc. Topological order
+		// guarantees the dependency was started first.
+		for _, dep := range sortedKeys(svc.DependsOn) {
+			switch svc.DependsOn[dep].Condition {
+			case types.ServiceConditionHealthy:
+				if err := waitHealthy(ctx, p, dep); err != nil {
+					return fmt.Errorf("waiting for %s to be healthy: %w", dep, err)
+				}
+			case types.ServiceConditionCompletedSuccessfully:
+				if err := waitCompleted(ctx, p, dep); err != nil {
+					return fmt.Errorf("waiting for %s to complete: %w", dep, err)
+				}
 			}
 		}
 		if pol := restartPolicy(svc); pol != "" {
@@ -89,7 +102,11 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 		if err := backend.Run(ctx, runArgs(p, svc)...); err != nil {
 			return fmt.Errorf("start %s: %w", name, err)
 		}
-		summary[name] = "started"
+		if recreated {
+			summary[name] = "recreated"
+		} else {
+			summary[name] = "started"
+		}
 	}
 	// Real-run summary (dry-run already printed the exact commands).
 	if !backend.DryRun {
@@ -103,18 +120,103 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 	return nil
 }
 
-// Down stops and removes every container we own, then deletes the network.
-func Down(ctx context.Context, p *types.Project) error {
+// DownOptions controls teardown.
+type DownOptions struct {
+	Volumes       bool // -v: also remove the project's named volumes
+	RemoveOrphans bool // remove containers whose service is no longer in the file
+}
+
+// Down stops and removes this project's containers, then deletes the network.
+// Containers whose service is no longer defined are kept (with a warning) unless
+// RemoveOrphans is set; named volumes are removed only when Volumes is set.
+func Down(ctx context.Context, p *types.Project, opts DownOptions) error {
 	cs, err := backend.ListByProject(ctx, p.Name)
 	if err != nil {
 		return err
 	}
 	for _, c := range cs {
+		if _, defined := p.Services[c.Labels[backend.LabelService]]; !defined && !opts.RemoveOrphans {
+			fmt.Fprintf(backend.Stdout, "arboretum: warning: orphan container %s is not in the compose file; pass --remove-orphans to remove it\n", c.Name)
+			continue
+		}
 		_ = backend.Run(ctx, "stop", c.Name)
 		_ = backend.Run(ctx, "rm", c.Name)
 	}
 	_ = backend.Run(ctx, "network", "delete", networkName(p))
+	if opts.Volumes {
+		for _, name := range sortedKeys(p.Volumes) {
+			_ = backend.Run(ctx, "volume", "delete", name)
+		}
+	}
 	return nil
+}
+
+// BuildAll builds images for every service that declares a build section.
+func BuildAll(ctx context.Context, p *types.Project) error {
+	for _, name := range sortedServiceNames(p) {
+		svc := p.Services[name]
+		if svc.Build == nil {
+			continue
+		}
+		if err := build(ctx, p, svc); err != nil {
+			return fmt.Errorf("build %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// Pull pulls the image for every service that references one.
+func Pull(ctx context.Context, p *types.Project) error {
+	for _, name := range sortedServiceNames(p) {
+		svc := p.Services[name]
+		if svc.Image == "" {
+			continue
+		}
+		if err := backend.Run(ctx, "image", "pull", svc.Image); err != nil {
+			return fmt.Errorf("pull %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// RunOptions controls a one-off `run`.
+type RunOptions struct {
+	Detach bool
+	NoTTY  bool
+	Env    []string
+}
+
+// RunOneOff starts a throwaway container for a service (compose's `run`):
+// attached to the project network, --rm, with an optional command override.
+func RunOneOff(ctx context.Context, p *types.Project, service string, opts RunOptions, cmd ...string) error {
+	svc, ok := p.Services[service]
+	if !ok {
+		return fmt.Errorf("no such service: %s", service)
+	}
+	args := []string{"run", "--rm"}
+	if opts.Detach {
+		args = append(args, "--detach")
+	} else if !opts.NoTTY {
+		args = append(args, "--tty", "--interactive")
+	}
+	args = append(args, "--network", networkName(p), "--dns-domain", p.Name)
+	for _, k := range sortedEnvKeys(svc.Environment) {
+		if v := svc.Environment[k]; v != nil {
+			args = append(args, "--env", k+"="+*v)
+		} else {
+			args = append(args, "--env", k)
+		}
+	}
+	for _, e := range opts.Env {
+		args = append(args, "--env", e)
+	}
+	args = append(args, imageRef(p, svc))
+	if len(cmd) > 0 {
+		args = append(args, cmd...)
+	} else {
+		args = append(args, svc.Command...)
+	}
+	return backend.Run(ctx, args...)
 }
 
 // Stop stops this project's containers without removing them.
@@ -485,6 +587,26 @@ func waitHealthy(ctx context.Context, p *types.Project, name string) error {
 	return fmt.Errorf("not healthy after %d attempts", retries+1)
 }
 
+// waitCompleted blocks until a dependency container has exited (compose's
+// `service_completed_successfully`). Note: container 1.0.0's `inspect` does not
+// expose the exit code, so we can only confirm it stopped, not that it exited 0.
+func waitCompleted(ctx context.Context, p *types.Project, name string) error {
+	cname := containerName(p, name)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		st, err := backend.ContainerState(ctx, cname)
+		if err != nil {
+			return err
+		}
+		if st != "" && st != "running" {
+			return nil
+		}
+		sleepFn(time.Second)
+	}
+}
+
 // healthTest resolves a compose healthcheck into a command. shell is true when
 // it must run under `sh -c` (CMD-SHELL or the legacy string form).
 func healthTest(svc types.ServiceConfig) (cmd []string, shell, ok bool) {
@@ -524,10 +646,26 @@ func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error
 	return backend.Run(ctx, args...)
 }
 
-// runArgs builds the `container run` argv for a service. This is the heart of
-// the translation: compose fields -> container flags.
+// runArgs builds the `container run` argv for a service, including a
+// config-hash label so a later `up` can detect config changes and recreate.
 func runArgs(p *types.Project, svc types.ServiceConfig) []string {
-	a := []string{
+	flags, tail := runSpec(p, svc)
+	flags = append(flags, "--label", backend.LabelConfigHash+"="+hashStrings(append(append([]string{}, flags...), tail...)))
+	return append(flags, tail...)
+}
+
+// configHash is the stable fingerprint of a service's run config (flags +
+// image + command), excluding the hash label itself. Up compares it against the
+// running container's stored hash to decide whether to recreate.
+func configHash(p *types.Project, svc types.ServiceConfig) string {
+	flags, tail := runSpec(p, svc)
+	return hashStrings(append(flags, tail...))
+}
+
+// runSpec returns the `container run` flags (through volumes) and the trailing
+// image+command args, split so the config-hash label can be inserted between.
+func runSpec(p *types.Project, svc types.ServiceConfig) (flags, tail []string) {
+	flags = []string{
 		"run", "--detach",
 		"--name", containerName(p, svc.Name),
 		"--network", networkName(p),
@@ -540,48 +678,57 @@ func runArgs(p *types.Project, svc types.ServiceConfig) []string {
 		"--label", backend.LabelService + "=" + svc.Name,
 	}
 	if m := memLimit(svc); m != "" {
-		a = append(a, "--memory", m)
+		flags = append(flags, "--memory", m)
 	}
 	if c := cpuLimit(svc); c != "" {
-		a = append(a, "--cpus", c)
+		flags = append(flags, "--cpus", c)
 	}
 	if svc.WorkingDir != "" {
-		a = append(a, "--workdir", svc.WorkingDir)
+		flags = append(flags, "--workdir", svc.WorkingDir)
 	}
 	if svc.User != "" {
-		a = append(a, "--user", svc.User)
+		flags = append(flags, "--user", svc.User)
 	}
 	if len(svc.Entrypoint) > 0 {
-		a = append(a, "--entrypoint", svc.Entrypoint[0])
+		flags = append(flags, "--entrypoint", svc.Entrypoint[0])
 	}
 	for _, k := range sortedKeys(svc.Labels) {
-		a = append(a, "--label", k+"="+svc.Labels[k])
+		flags = append(flags, "--label", k+"="+svc.Labels[k])
 	}
 	for _, k := range sortedEnvKeys(svc.Environment) {
 		if v := svc.Environment[k]; v != nil {
-			a = append(a, "--env", k+"="+*v)
+			flags = append(flags, "--env", k+"="+*v)
 		} else {
-			a = append(a, "--env", k)
+			flags = append(flags, "--env", k)
 		}
 	}
 	for _, port := range svc.Ports {
 		if port.Published != "" {
-			a = append(a, "--publish", fmt.Sprintf("%s:%d", port.Published, port.Target))
+			flags = append(flags, "--publish", fmt.Sprintf("%s:%d", port.Published, port.Target))
 		}
 	}
 	for _, vol := range svc.Volumes {
 		if vol.Source != "" {
-			a = append(a, "--volume", vol.Source+":"+vol.Target)
+			flags = append(flags, "--volume", vol.Source+":"+vol.Target)
 		}
 	}
-	a = append(a, imageRef(p, svc))
+	tail = []string{imageRef(p, svc)}
 	if len(svc.Entrypoint) > 1 {
 		// container's --entrypoint takes a single executable; the rest of a
 		// compose entrypoint list becomes leading arguments.
-		a = append(a, svc.Entrypoint[1:]...)
+		tail = append(tail, svc.Entrypoint[1:]...)
 	}
-	a = append(a, svc.Command...)
-	return a
+	tail = append(tail, svc.Command...)
+	return flags, tail
+}
+
+func hashStrings(ss []string) string {
+	h := fnv.New64a()
+	for _, s := range ss {
+		_, _ = h.Write([]byte(s))
+		_, _ = h.Write([]byte{0})
+	}
+	return strconv.FormatUint(h.Sum64(), 16)
 }
 
 // containerName scopes the container to its project as "<service>.<project>".
