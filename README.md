@@ -76,6 +76,24 @@ orchard down             # stop + remove containers and the network
 
 Flags: `-f/--file` (repeatable), `-p/--project-name`, `--dry-run`.
 
+### Builder management
+
+Apple `container` keeps a long-lived helper container (a BuildKit-based builder)
+running after the first image build — it isn't part of any compose project, so
+`down` leaves it alone (matching compose semantics). Manage it explicitly:
+
+```sh
+orchard builder status   # show the builder's state
+orchard builder stop     # stop it (frees its ~2 GB)
+orchard builder start    # start it again
+orchard builder delete   # remove it entirely
+
+orchard down --prune-builder   # tear down the project AND stop the builder
+```
+
+These live in their own namespace — like `docker compose` vs `docker builder` —
+so adding them keeps orchard a strict superset of the compose CLI surface.
+
 ## Development
 
 TDD/BDD, **100% statement coverage** is the standard for this repo.

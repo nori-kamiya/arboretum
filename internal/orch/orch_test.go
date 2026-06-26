@@ -152,6 +152,26 @@ func TestRunArgs_WorkdirUserEntrypointLabels(t *testing.T) {
 	}
 }
 
+// --- Builder ---------------------------------------------------------------
+
+func TestBuilder_DryRunEmitsAction(t *testing.T) {
+	out := captureDryRun(t, func() error { return Builder(context.Background(), "stop") })
+	if strings.TrimSpace(out) != "container builder stop" {
+		t.Fatalf("builder cmd = %q", out)
+	}
+}
+
+func TestBuilder_ErrorPropagates(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("builder down")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	if err := Builder(context.Background(), "stop"); err == nil {
+		t.Fatal("expected builder error")
+	}
+}
+
 // --- Exec ------------------------------------------------------------------
 
 func TestExec_DefaultAllocatesTTY(t *testing.T) {

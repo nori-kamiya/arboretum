@@ -11,8 +11,12 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
 
 ## Current state (Phase 1 / MVP — DONE; Phase 2 in progress)
 
-- Commands: `up` (`-d`), `down`, `ps`, `logs` (`--follow`), `exec`
-  (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via non-interspersed flags).
+- Commands: `up` (`-d`), `down` (`--prune-builder`), `ps`, `logs` (`--follow`),
+  `exec` (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via non-interspersed flags),
+  and `builder` (`status`/`start`/`stop`/`delete`) wrapping `container builder`.
+  `builder` is a deliberate superset (its own namespace, like `docker compose`
+  vs `docker builder`) so compose compatibility is preserved; `down` stays
+  compose-pure unless `--prune-builder` is passed. Verified on the real runtime.
 - Compose features translated: `image`, `build` (context + dockerfile),
   `environment`, `ports`, `volumes` (+ named volumes pre-created), `networks`
   (single per-project network), `depends_on` (topological start order),

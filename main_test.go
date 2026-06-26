@@ -177,6 +177,43 @@ func TestPreflight_DryRunWorksWithoutContainer(t *testing.T) {
 	}
 }
 
+func TestBuilder_Subcommands_DryRun(t *testing.T) {
+	for _, action := range []string{"status", "start", "stop", "delete"} {
+		code, out, errOut := runCLI("builder", action, "--dry-run")
+		if code != 0 {
+			t.Fatalf("builder %s: exit %d, stderr=%s", action, code, errOut)
+		}
+		if !strings.Contains(out, "container builder "+action) {
+			t.Fatalf("builder %s output = %q", action, out)
+		}
+	}
+}
+
+func TestBuilder_PreflightGuidesWhenMissing(t *testing.T) {
+	oldBin := backend.Bin
+	backend.Bin = "orchard-no-such-binary-zzz"
+	t.Cleanup(func() { backend.Bin = oldBin; backend.DryRun = false })
+
+	code, _, errOut := runCLI("builder", "stop") // real run, no --dry-run
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(errOut, "not installed") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+}
+
+func TestDown_PruneBuilder_DryRun(t *testing.T) {
+	code, out, errOut := runCLI("down", "--prune-builder", "--dry-run", "-f", composeFile)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errOut)
+	}
+	mustContain(t, out,
+		"container network delete demo_default",
+		"container builder stop",
+	)
+}
+
 func TestVersion_Command(t *testing.T) {
 	code, out, errOut := runCLI("version")
 	if code != 0 {

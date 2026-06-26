@@ -52,12 +52,15 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		dryRun      bool
 	)
 
-	load := func(ctx context.Context) (*types.Project, error) {
+	// prep wires backend globals and fails fast with install guidance when the
+	// runtime is absent (a no-op under --dry-run, so previews work without it).
+	prep := func() error {
 		backend.DryRun = dryRun
 		backend.Stdout = out
-		// Fail fast with install guidance when the runtime is absent (a no-op
-		// under --dry-run, so previews still work without `container`).
-		if err := backend.EnsureInstalled(); err != nil {
+		return backend.EnsureInstalled()
+	}
+	load := func(ctx context.Context) (*types.Project, error) {
+		if err := prep(); err != nil {
 			return nil, err
 		}
 		return compose.Load(ctx, files, projectName)
@@ -93,13 +96,18 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		Use:   "down",
 		Short: "Stop and remove containers and the network",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			prune, _ := cmd.Flags().GetBool("prune-builder")
 			p, err := load(cmd.Context())
 			if err != nil {
 				return err
 			}
-			return orch.Down(cmd.Context(), p)
+			if err := orch.Down(cmd.Context(), p); err != nil || !prune {
+				return err
+			}
+			return orch.Builder(cmd.Context(), "stop")
 		},
 	}
+	down.Flags().Bool("prune-builder", false, "also stop the shared image builder after teardown")
 
 	ps := &cobra.Command{
 		Use:   "ps",
@@ -165,6 +173,33 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		},
 	}
 
-	root.AddCommand(up, down, ps, logs, exec, versionCmd)
+	// builder manages the shared image builder that `container` spins up for
+	// builds. This is outside docker-compose's vocabulary (compose itself never
+	// touches the builder), so it lives in its own namespace — mirroring the
+	// `docker compose` vs `docker builder` split — and keeps `down` compose-pure.
+	builder := &cobra.Command{
+		Use:   "builder",
+		Short: "Manage the shared image builder used by build/up",
+	}
+	mkBuilder := func(action, short string) *cobra.Command {
+		return &cobra.Command{
+			Use:   action,
+			Short: short,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				if err := prep(); err != nil {
+					return err
+				}
+				return orch.Builder(cmd.Context(), action)
+			},
+		}
+	}
+	builder.AddCommand(
+		mkBuilder("status", "Show the builder status"),
+		mkBuilder("start", "Start the builder"),
+		mkBuilder("stop", "Stop the builder"),
+		mkBuilder("delete", "Delete the builder"),
+	)
+
+	root.AddCommand(up, down, ps, logs, exec, builder, versionCmd)
 	return root
 }

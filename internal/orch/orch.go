@@ -162,6 +162,14 @@ func Exec(ctx context.Context, p *types.Project, service string, opts ExecOption
 	return backend.Run(ctx, args...)
 }
 
+// Builder runs a `container builder` management action (status/start/stop/
+// delete). The builder is a runtime-managed helper container, not part of any
+// compose project, so this is exposed as its own command rather than folded
+// into up/down.
+func Builder(ctx context.Context, action string) error {
+	return backend.Run(ctx, "builder", action)
+}
+
 func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error {
 	args := []string{"build", "-t", imageRef(p, svc)}
 	if svc.Build.Dockerfile != "" {
