@@ -1,5 +1,7 @@
 # arboretum
 
+*[日本語版 README](README.ja.md)*
+
 `docker-compose`, backed by Apple's [`container`](https://github.com/apple/container)
 runtime. Parses compose files with the official compose-spec parser and
 translates them into `container` CLI calls — so each service runs in its own
@@ -10,14 +12,15 @@ Apple `container` runs one VM per container, sized per service (`--memory 256m
 --cpus 1`) and freed on stop. arboretum brings the `docker compose` ergonomics on
 top of that model.
 
-## Status
+## Scope
 
-Phase 1 (MVP): `up` / `down` / `ps` / `logs`, covering image & build services,
-networks, named volumes, env, ports, `depends_on` ordering and **resource
-limits** (`deploy.resources.limits` / `mem_limit` / `cpus`).
+arboretum targets **local development & testing** — spin your compose stack up on
+your Mac, develop against it, tear it down. Production typically runs on Linux
+(k8s, plain Docker, …), so arboretum doesn't try to be a production orchestrator;
+it aims for *enough* `docker compose` fidelity to develop and verify locally.
 
-Phase 2 (in progress): `exec`, plus `working_dir` / `user` / `entrypoint` /
-service `labels` translation. See `docs/STATUS.md` for the roadmap.
+See [What works / caveats / not yet](#what-works--caveats--not-yet) for the exact
+feature coverage, and `docs/STATUS.md` for implementation notes.
 
 Use `--dry-run` to print the exact `container` commands without executing them:
 
@@ -189,24 +192,51 @@ a `homebrew-tap` repo and a `HOMEBREW_TAP_GITHUB_TOKEN` secret.
 
 [MIT](LICENSE).
 
-## Status & known gaps
+## What works / caveats / not yet
 
-Verified end-to-end against Apple `container` 1.0.0 on macOS 26 (arm64):
-`up` (fresh / idempotent / restart-stopped), `build`, `ps`, `exec`, `logs`,
-`down`, network reuse, and the `--workdir`/`--user`/`--entrypoint`/`--label`
-translations. JSON output is parsed from the real (nested) schema.
+Verified end-to-end against Apple `container` 1.0.0 on macOS 26 (arm64).
 
-Remaining gaps:
+### ✅ Works (docker-compose-like)
 
-- **Service-name DNS** — containers are named `<service>.<project>` and run with
-  `--dns-domain <project>`, so they're unique per project (no cross-project
-  collisions). For services to reach each other by bare name, create the
-  project's local DNS domain once (admin):
-  `sudo container system dns create <project>` (`up` prints this hint when it's
-  missing). Without it, containers still run and talk by IP.
-- **Config changes on `up`** — an existing container is left as-is; `up` does not
-  yet diff config to recreate it. Run `down` first to apply compose edits.
-- profiles, restart policies — phase 2+.
+- **Commands**: `up` (`-d`, `--force-recreate`), `down` (`-v`, `--remove-orphans`,
+  `--prune-builder`), `ps` (`-q`, `--format json`), `logs` (`--follow`), `exec`,
+  `run`, `start`/`stop`/`restart`, `build`, `pull`, `config`, `builder`, `version`.
+- **Files**: `compose.yaml`/`.yml` & `docker-compose.yml`/`.yaml` discovery,
+  `*.override.*` merge, multiple `-f`, `--profile`, `env_file`, `.env`.
+- **Services**: `image`; `build` (context, dockerfile, target, args, labels);
+  `environment`; `ports` (published); `volumes` (named + bind); `depends_on`
+  (start order + `service_healthy` + `service_completed_successfully`);
+  CPU/memory (`deploy.resources.limits` → `mem_limit`/`cpus` → `reservations`);
+  `working_dir`, `user`, `entrypoint`, service `labels`.
+- **Behavior**: idempotent `up` with config-hash auto-recreate; per-project
+  network; service-name DNS; cross-project name isolation; concurrent colored
+  logs with Ctrl-C teardown.
+
+### ⚠️ Caveats (from the young Apple `container` runtime, not arboretum)
+
+- **macOS 26 (Tahoe) + Apple silicon only.**
+- **Service-name DNS needs a one-time `sudo container system dns create <project>`**
+  (admin-only; `up` hints when missing). Without it, containers run and reach each
+  other by IP but not by name.
+- **No native healthchecks** — arboretum emulates `service_healthy` by exec-polling
+  the compose `healthcheck.test`.
+- **No restart policies** — `restart:` is reported as unsupported (arboretum is a
+  CLI, not a supervising daemon).
+- **`service_completed_successfully`** confirms the dependency exited, but not that
+  it exited `0` (the runtime doesn't expose the exit code).
+
+### ❌ Not yet supported
+
+These compose features are currently **ignored** (no error) — avoid relying on
+them locally, or they'll silently differ from a real Docker setup:
+
+- **Multiple networks per service** (`networks: [a, b]`) — everything joins one
+  per-project network. No network aliases / external / custom subnets.
+- **`secrets` and `configs`.**
+- **Scaling** (`up --scale`, `deploy.replicas`).
+- Advanced `ports` (protocol, ranges, host IP), `extra_hosts`, `cap_add/drop`,
+  `devices`, `sysctls`, `tmpfs`, `extends`.
+- Subcommands `cp`, `top`, `kill`, `pause`/`unpause`, `events`.
 
 ## Nix
 
