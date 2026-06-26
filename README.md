@@ -74,7 +74,9 @@ orchard exec db psql     # run a command in a running service container
 orchard down             # stop + remove containers and the network
 ```
 
-Flags: `-f/--file` (repeatable), `-p/--project-name`, `--dry-run`.
+Flags: `-f/--file` (repeatable), `-p/--project-name`, `--profile` (repeatable),
+`--dry-run`. `compose.override.yaml` and multiple `-f` files are merged as in
+Docker Compose.
 
 ### Builder management
 

@@ -14,14 +14,20 @@ import (
 
 // Load parses the given compose files (or the default discovery set when empty)
 // into a Project. projectName overrides the name from the file / directory when
-// non-empty.
-func Load(ctx context.Context, files []string, projectName string) (*types.Project, error) {
+// non-empty. profiles activates the named compose profiles (also honoring the
+// COMPOSE_PROFILES env var); services in non-active profiles are excluded.
+//
+// compose.override.yaml (and multiple -f files) are merged by compose-go, so no
+// extra handling is needed here.
+func Load(ctx context.Context, files []string, projectName string, profiles []string) (*types.Project, error) {
 	opts := []cli.ProjectOptionsFn{
 		cli.WithOsEnv,
 		cli.WithDotEnv,
+		// After WithOsEnv so COMPOSE_PROFILES is visible; merges flag + env.
+		cli.WithDefaultProfiles(profiles...),
 	}
 	if len(files) == 0 {
-		// Discover compose.yaml/docker-compose.yml in the working dir.
+		// Discover compose.yaml/docker-compose.yml (+ override) in the working dir.
 		opts = append(opts, cli.WithDefaultConfigPath)
 	}
 	if projectName != "" {

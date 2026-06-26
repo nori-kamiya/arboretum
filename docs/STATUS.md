@@ -131,7 +131,10 @@ Priority order:
    detects `restart:`/`deploy.restart_policy` and Up prints a one-line warning
    that it's ignored (verified), rather than silently dropping it. Revisit if the
    runtime adds restart support.
-7. profiles, `compose.override.yaml`.
+7. ~~profiles, `compose.override.yaml`~~ — DONE. `--profile` (repeatable) flag →
+   `cli.WithDefaultProfiles` (also honors `COMPOSE_PROFILES`); profiled services
+   are excluded unless active. Override/multi-`-f` merging is handled by
+   compose-go already. Both verified on the real CLI.
 
 ## Known caveats (carried)
 

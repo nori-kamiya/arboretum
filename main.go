@@ -55,6 +55,7 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	var (
 		files       []string
 		projectName string
+		profiles    []string
 		dryRun      bool
 	)
 
@@ -69,7 +70,7 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		if err := prep(); err != nil {
 			return nil, err
 		}
-		return compose.Load(ctx, files, projectName)
+		return compose.Load(ctx, files, projectName, profiles)
 	}
 
 	root := &cobra.Command{
@@ -81,6 +82,7 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	}
 	pf := root.PersistentFlags()
 	pf.StringArrayVarP(&files, "file", "f", nil, "compose file (repeatable)")
+	pf.StringArrayVar(&profiles, "profile", nil, "enable a compose profile (repeatable)")
 	pf.StringVarP(&projectName, "project-name", "p", "", "project name (default: from file/dir)")
 	pf.BoolVar(&dryRun, "dry-run", false, "print the container commands instead of running them")
 
