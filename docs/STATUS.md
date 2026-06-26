@@ -109,8 +109,13 @@ Priority order:
    dry-run stay sequential/deterministic. Ctrl-C cancels the command context
    (`signal.NotifyContext` in main) which kills the children. Verified on the
    real runtime: live interleaved output and clean SIGINT shutdown.
-3. **`depends_on` healthcheck conditions** (`condition: service_healthy`) — poll
-   `container inspect`/exec until healthy before starting dependents.
+3. ~~**`depends_on` healthcheck conditions**~~ — DONE. container 1.0.0 has no
+   native healthchecks (no run flags, no health in inspect), so `orch.waitHealthy`
+   runs the compose `healthcheck.test` via `container exec` (CMD / CMD-SHELL /
+   legacy), polling with the compose interval/retries/start_period before
+   starting a `service_healthy` dependent. Verified on the real runtime: a
+   dependent waited for its dependency's healthcheck to pass before starting.
+   (`service_completed_successfully` not yet handled.)
 4. ~~**`exec`** subcommand~~ — DONE (`orch.Exec`; `container exec --tty
    --interactive` by default, `-T` to disable). Verified against real
    `container exec` (env passthrough + command execution work).

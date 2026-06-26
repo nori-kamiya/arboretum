@@ -9,7 +9,9 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/nori-kamiya/orchard/internal/backend"
@@ -56,6 +58,16 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 				}
 			}
 			continue
+		}
+		// Honor `depends_on: condition: service_healthy` before creating svc.
+		// Topological order guarantees the dependency is already running.
+		for _, dep := range sortedKeys(svc.DependsOn) {
+			if svc.DependsOn[dep].Condition != types.ServiceConditionHealthy {
+				continue
+			}
+			if err := waitHealthy(ctx, p, dep); err != nil {
+				return fmt.Errorf("waiting for %s to be healthy: %w", dep, err)
+			}
 		}
 		if svc.Image == "" && svc.Build != nil {
 			if err := build(ctx, p, svc); err != nil {
@@ -260,6 +272,74 @@ func Exec(ctx context.Context, p *types.Project, service string, opts ExecOption
 // into up/down.
 func Builder(ctx context.Context, action string) error {
 	return backend.Run(ctx, "builder", action)
+}
+
+// sleepFn is the seam for health-poll delays; tests swap it out.
+var sleepFn = time.Sleep
+
+// waitHealthy polls a dependency's compose healthcheck (Apple `container` has no
+// native healthchecks) by exec'ing the test command until it succeeds or the
+// retry budget is exhausted.
+func waitHealthy(ctx context.Context, p *types.Project, name string) error {
+	svc := p.Services[name]
+	test, shell, ok := healthTest(svc)
+	if !ok {
+		return fmt.Errorf("service %q has no usable healthcheck", name)
+	}
+	retries := 3
+	if svc.HealthCheck.Retries != nil {
+		retries = int(*svc.HealthCheck.Retries)
+	}
+	interval := durationOr(svc.HealthCheck.Interval, time.Second)
+	if sp := durationOr(svc.HealthCheck.StartPeriod, 0); sp > 0 {
+		sleepFn(sp)
+	}
+
+	cname := containerName(p, name)
+	for attempt := 0; attempt <= retries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		args := []string{"exec", cname}
+		if shell {
+			args = append(args, "sh", "-c", test[0])
+		} else {
+			args = append(args, test...)
+		}
+		if _, err := backend.Output(ctx, args...); err == nil {
+			return nil
+		}
+		if attempt < retries {
+			sleepFn(interval)
+		}
+	}
+	return fmt.Errorf("not healthy after %d attempts", retries+1)
+}
+
+// healthTest resolves a compose healthcheck into a command. shell is true when
+// it must run under `sh -c` (CMD-SHELL or the legacy string form).
+func healthTest(svc types.ServiceConfig) (cmd []string, shell, ok bool) {
+	hc := svc.HealthCheck
+	if hc == nil || hc.Disable || len(hc.Test) == 0 {
+		return nil, false, false
+	}
+	switch hc.Test[0] {
+	case "NONE":
+		return nil, false, false
+	case "CMD":
+		return hc.Test[1:], false, len(hc.Test) > 1
+	case "CMD-SHELL":
+		return []string{strings.Join(hc.Test[1:], " ")}, true, len(hc.Test) > 1
+	default:
+		return []string{strings.Join(hc.Test, " ")}, true, true
+	}
+}
+
+func durationOr(d *types.Duration, def time.Duration) time.Duration {
+	if d == nil {
+		return def
+	}
+	return time.Duration(*d)
 }
 
 func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error {

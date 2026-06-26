@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/nori-kamiya/orchard/internal/backend"
@@ -16,6 +17,13 @@ import (
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+// swapSleep replaces the health-poll sleep with a no-op; returns a restore func.
+func swapSleep() func() {
+	prev := sleepFn
+	sleepFn = func(time.Duration) {}
+	return func() { sleepFn = prev }
+}
 
 func TestLogs_FollowMultiplexesWithPrefixes(t *testing.T) {
 	LogColor = false
@@ -230,6 +238,205 @@ func TestBuilder_ErrorPropagates(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 	if err := Builder(context.Background(), "stop"); err == nil {
 		t.Fatal("expected builder error")
+	}
+}
+
+// --- healthcheck -----------------------------------------------------------
+
+func hcService(name string, test types.HealthCheckTest, retries uint64) types.ServiceConfig {
+	return types.ServiceConfig{
+		Name:        name,
+		Image:       "img",
+		HealthCheck: &types.HealthCheckConfig{Test: test, Retries: &retries},
+	}
+}
+
+func TestHealthTest_Forms(t *testing.T) {
+	cmd, shell, ok := healthTest(types.ServiceConfig{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready", "-q"}}})
+	if !ok || shell || strings.Join(cmd, " ") != "pg_isready -q" {
+		t.Fatalf("CMD: %v %v %v", cmd, shell, ok)
+	}
+	cmd, shell, ok = healthTest(types.ServiceConfig{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD-SHELL", "curl -f localhost"}}})
+	if !ok || !shell || cmd[0] != "curl -f localhost" {
+		t.Fatalf("CMD-SHELL: %v %v %v", cmd, shell, ok)
+	}
+	cmd, shell, ok = healthTest(types.ServiceConfig{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"echo", "hi"}}})
+	if !ok || !shell || cmd[0] != "echo hi" {
+		t.Fatalf("legacy: %v %v %v", cmd, shell, ok)
+	}
+	for _, bad := range []*types.HealthCheckConfig{
+		nil,
+		{Disable: true},
+		{Test: types.HealthCheckTest{}},
+		{Test: types.HealthCheckTest{"NONE"}},
+	} {
+		if _, _, ok := healthTest(types.ServiceConfig{HealthCheck: bad}); ok {
+			t.Fatalf("expected unusable for %+v", bad)
+		}
+	}
+}
+
+func TestDurationOr(t *testing.T) {
+	if durationOr(nil, time.Second) != time.Second {
+		t.Fatal("nil should give default")
+	}
+	d := types.Duration(2 * time.Second)
+	if durationOr(&d, time.Minute) != 2*time.Second {
+		t.Fatal("should use provided")
+	}
+}
+
+func TestWaitHealthy_BecomesHealthyAfterRetries(t *testing.T) {
+	t.Cleanup(swapSleep())
+	calls := 0
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		calls++
+		if calls < 3 {
+			return nil, errors.New("not ready")
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	sp := types.Duration(time.Second)
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db": {Name: "db", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "ok"}, StartPeriod: &sp}},
+	}}
+	if err := waitHealthy(context.Background(), p, "db"); err != nil {
+		t.Fatalf("expected healthy, got %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("want 3 probes, got %d", calls)
+	}
+}
+
+func TestWaitHealthy_NeverHealthy(t *testing.T) {
+	t.Cleanup(swapSleep())
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
+		return nil, errors.New("down")
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{"db": hcService("db", types.HealthCheckTest{"CMD", "ok"}, 2)}}
+	if err := waitHealthy(context.Background(), p, "db"); err == nil {
+		t.Fatal("expected unhealthy error")
+	}
+}
+
+func TestWaitHealthy_ShellForm(t *testing.T) {
+	t.Cleanup(swapSleep())
+	var sawShell bool
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "exec db sh -c curl -f localhost" {
+			sawShell = true
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db": {Name: "db", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD-SHELL", "curl -f localhost"}}},
+	}}
+	if err := waitHealthy(context.Background(), p, "db"); err != nil {
+		t.Fatal(err)
+	}
+	if !sawShell {
+		t.Fatal("expected CMD-SHELL probe via sh -c")
+	}
+}
+
+func TestUp_HealthyDependencyNeverReady(t *testing.T) {
+	t.Cleanup(swapSleep())
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "network list") || strings.HasPrefix(cmd, "ls --all") {
+			return []byte("[]"), nil
+		}
+		if strings.HasPrefix(cmd, "exec db") {
+			return nil, errors.New("not ready") // healthcheck never passes
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	retries := uint64(1)
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db":  {Name: "db", Image: "postgres", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}, Retries: &retries}},
+		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}},
+	}}
+	if err := Up(context.Background(), p, true); err == nil {
+		t.Fatal("expected Up to fail when dependency never becomes healthy")
+	}
+}
+
+func TestUp_StartedConditionSkipsHealthWait(t *testing.T) {
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "exec ") {
+			t.Errorf("service_started must not trigger a healthcheck probe: %q", cmd)
+		}
+		if strings.HasPrefix(cmd, "network list") || strings.HasPrefix(cmd, "ls --all") {
+			return []byte("[]"), nil
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db":  {Name: "db", Image: "postgres"},
+		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionStarted}}},
+	}}
+	if err := Up(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWaitHealthy_NoHealthcheck(t *testing.T) {
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db"}}}
+	if err := waitHealthy(context.Background(), p, "db"); err == nil {
+		t.Fatal("expected error for missing healthcheck")
+	}
+}
+
+func TestWaitHealthy_ContextCancelled(t *testing.T) {
+	t.Cleanup(swapSleep())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &types.Project{Name: "demo", Services: types.Services{"db": hcService("db", types.HealthCheckTest{"CMD", "ok"}, 1)}}
+	if err := waitHealthy(ctx, p, "db"); err == nil {
+		t.Fatal("expected context error")
+	}
+}
+
+func TestUp_WaitsForHealthyDependency(t *testing.T) {
+	t.Cleanup(swapSleep())
+	var sawExec, sawWebRun bool
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "network list"), strings.HasPrefix(cmd, "ls --all"):
+			return []byte("[]"), nil
+		case strings.HasPrefix(cmd, "exec db"):
+			sawExec = true // the healthcheck probe
+		case strings.Contains(cmd, "--name web"):
+			if !sawExec {
+				t.Error("web started before db healthcheck passed")
+			}
+			sawWebRun = true
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db":  {Name: "db", Image: "postgres", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}}},
+		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}},
+	}}
+	if err := Up(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	if !sawExec || !sawWebRun {
+		t.Fatalf("exec=%v webRun=%v", sawExec, sawWebRun)
 	}
 }
 
