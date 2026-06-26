@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/nori-kamiya/orchard/internal/backend"
+	"github.com/nori-kamiya/arboretum/internal/backend"
 )
 
 type errWriter struct{}
@@ -191,7 +191,7 @@ func TestRunArgs_FullService(t *testing.T) {
 	}
 	got := strings.Join(runArgs(p, svc), " ")
 	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
-		"--label orchard.project=demo --label orchard.service=api " +
+		"--label arboretum.project=demo --label arboretum.service=api " +
 		"--memory 512m --cpus 1 --env A=1 --env B --publish 8080:3000 " +
 		"--volume data:/data myapi:latest node server.js"
 	if got != want {
@@ -212,7 +212,7 @@ func TestRunArgs_WorkdirUserEntrypointLabels(t *testing.T) {
 	}
 	got := strings.Join(runArgs(p, svc), " ")
 	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
-		"--label orchard.project=demo --label orchard.service=api " +
+		"--label arboretum.project=demo --label arboretum.service=api " +
 		"--workdir /srv --user node --entrypoint ./entry.sh " +
 		"--label com.example.team=core --label com.example.tier=web " +
 		"myapi:latest --flag x start"
@@ -684,7 +684,7 @@ func TestUp_DetachedEmitsFullPipeline(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	wantPrefixes := []string{
 		"container network create",
-		"container volume create --label orchard.project=demo dbdata",
+		"container volume create --label arboretum.project=demo dbdata",
 		"container run --detach --name db", // db before api (dependency)
 		"container build -t demo-api",      // api builds
 		"container run --detach --name api",
@@ -768,8 +768,8 @@ func TestUp_SkipsRunningStartsStopped(t *testing.T) {
 		switch {
 		case strings.HasPrefix(cmd, "ls --all"):
 			return []byte(`[
-				{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}},
-				{"id":"api.demo","status":{"state":"stopped"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"api"}}}
+				{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db"}}},
+				{"id":"api.demo","status":{"state":"stopped"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"api"}}}
 			]`), nil
 		case strings.HasPrefix(cmd, "network list"):
 			return []byte("[]"), nil
@@ -796,7 +796,7 @@ func TestUp_StartStoppedErrorPropagates(t *testing.T) {
 		cmd := strings.Join(args, " ")
 		switch {
 		case strings.HasPrefix(cmd, "ls --all"):
-			return []byte(`[{"id":"db.demo","status":{"state":"exited"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"db"}}}]`), nil
+			return []byte(`[{"id":"db.demo","status":{"state":"exited"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db"}}}]`), nil
 		case strings.HasPrefix(cmd, "network list"):
 			return []byte("[]"), nil
 		case strings.HasPrefix(cmd, "start "):
@@ -848,7 +848,7 @@ func TestDown_StopsRemovesAndDeletesNetwork(t *testing.T) {
 		cmd := strings.Join(args, " ")
 		calls = append(calls, cmd)
 		if strings.HasPrefix(cmd, "ls ") {
-			return []byte(`[{"name":"db","labels":{"orchard.project":"demo","orchard.service":"db"}}]`), nil
+			return []byte(`[{"name":"db","labels":{"arboretum.project":"demo","arboretum.service":"db"}}]`), nil
 		}
 		return nil, nil
 	}))
@@ -881,7 +881,7 @@ func TestDown_ListErrorPropagates(t *testing.T) {
 
 func TestPs_ListsContainers(t *testing.T) {
 	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
-		return []byte(`[{"name":"db","labels":{"orchard.project":"demo","orchard.service":"db"}}]`), nil
+		return []byte(`[{"name":"db","labels":{"arboretum.project":"demo","arboretum.service":"db"}}]`), nil
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
@@ -928,7 +928,7 @@ func psStub(jsonOut string) func() {
 	})
 }
 
-const oneRunningWeb = `[{"id":"web.demo","status":{"state":"running"},"configuration":{"labels":{"orchard.project":"demo","orchard.service":"web"}}}]`
+const oneRunningWeb = `[{"id":"web.demo","status":{"state":"running"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"web"}}}]`
 
 func TestPs_TableWithPorts(t *testing.T) {
 	t.Cleanup(psStub(oneRunningWeb))
@@ -987,8 +987,8 @@ func TestPortsFor(t *testing.T) {
 // --- start/stop/restart ----------------------------------------------------
 
 const twoContainers = `[
-	{"id":"b.demo","configuration":{"labels":{"orchard.project":"demo","orchard.service":"b"}}},
-	{"id":"a.demo","configuration":{"labels":{"orchard.project":"demo","orchard.service":"a"}}}
+	{"id":"b.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"b"}}},
+	{"id":"a.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"a"}}}
 ]`
 
 func TestStopStartRestart(t *testing.T) {

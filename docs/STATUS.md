@@ -1,4 +1,4 @@
-# orchard — Status & Resume Notes
+# arboretum — Status & Resume Notes
 
 Last updated: 2026-06-25. Read this first when resuming.
 
@@ -63,7 +63,7 @@ go run . up --dry-run -f examples/compose.yaml
 Design choices to keep:
 - Container is **named after the service** (not prefixed) so Apple's embedded DNS
   resolves short names (`db`). Tracking/cleanup is by **label**
-  `orchard.project=<name>` (not by name), so `down`/`ps` filter on labels.
+  `arboretum.project=<name>` (not by name), so `down`/`ps` filter on labels.
 - Never reimplement compose schema — lean on compose-go.
 - Every runtime touch goes through `backend` so tests inject behavior.
 
@@ -102,7 +102,7 @@ Priority order:
        container `<service>.<domain>` (so it registers) AND pass
        `--dns-domain <domain>` to peers (search domain) → a peer resolves the
        **bare `<service>`**. Confirmed both container→container and host→container.
-     - Implication for orchard: deliver compose DNS by setting container name =
+     - Implication for arboretum: deliver compose DNS by setting container name =
        `<service>.<domain>` + `--dns-domain <domain>`, with `<domain>` = project
        name (also solves cross-project isolation). Domain creation is one-time
        sudo per domain → preflight + instruct (can't automate). Implement in #5.
@@ -133,7 +133,7 @@ Priority order:
    names are project-scoped. (`service_completed_successfully` aside, this closes
    the one-project-at-a-time caveat.)
 6. **`restart` policy** — ~~translate~~ NOT translatable: container 1.0.0 has no
-   `--restart` and orchard is not a supervising daemon. `orch.restartPolicy`
+   `--restart` and arboretum is not a supervising daemon. `orch.restartPolicy`
    detects `restart:`/`deploy.restart_policy` and Up prints a one-line warning
    that it's ignored (verified), rather than silently dropping it. Revisit if the
    runtime adds restart support.
@@ -145,13 +145,13 @@ Priority order:
 ## Known caveats (carried)
 
 - Service-name DNS needs a one-time `sudo container system dns create <project>`
-  (Apple requires admin to create the local domain; orchard can't automate it).
+  (Apple requires admin to create the local domain; arboretum can't automate it).
 - Bind-mount I/O performance for large codebases is unverified (orthogonal to
-  orchard; the original colima concern).
+  arboretum; the original colima concern).
 - `container` is young (v1.0) — keep using `--format json` and tolerant parsing.
 
 ## Packaging (later)
 
 Pure Go single binary → `buildGoModule` in the nix-darwin flake
 (`nori-kamiya/nix-darwin`), optionally `home.shellAliases.docker-compose =
-"orchard"`. Not in nixpkgs; self-host in the flake.
+"arboretum"`. Not in nixpkgs; self-host in the flake.

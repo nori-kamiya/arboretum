@@ -1,4 +1,4 @@
-// orchard — a docker-compose-compatible CLI backed by Apple's `container`
+// arboretum — a docker-compose-compatible CLI backed by Apple's `container`
 // runtime. Parses compose files with the official compose-spec parser and
 // translates them into `container` CLI calls.
 package main
@@ -11,9 +11,9 @@ import (
 	"os/signal"
 
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/nori-kamiya/orchard/internal/backend"
-	"github.com/nori-kamiya/orchard/internal/compose"
-	"github.com/nori-kamiya/orchard/internal/orch"
+	"github.com/nori-kamiya/arboretum/internal/backend"
+	"github.com/nori-kamiya/arboretum/internal/compose"
+	"github.com/nori-kamiya/arboretum/internal/orch"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +45,7 @@ func run(args []string, out, errOut io.Writer) int {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(errOut, "orchard:", err)
+		fmt.Fprintln(errOut, "arboretum:", err)
 		return 1
 	}
 	return 0
@@ -74,9 +74,9 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	}
 
 	root := &cobra.Command{
-		Use:           "orchard",
+		Use:           "arboretum",
 		Short:         "docker-compose, backed by Apple's container runtime",
-		Version:       version, // enables `orchard --version`
+		Version:       version, // enables `arboretum --version`
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -202,7 +202,7 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	}
 	// Stop flag parsing at the first positional (the service name) so flags that
 	// belong to the executed command (e.g. `exec db psql -U postgres`) pass
-	// through untouched instead of being claimed by orchard.
+	// through untouched instead of being claimed by arboretum.
 	exec.Flags().SetInterspersed(false)
 	ef := exec.Flags()
 	ef.BoolP("detach", "d", false, "run the command in the background")
@@ -215,7 +215,7 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		Use:   "version",
 		Short: "Print detailed version information",
 		RunE: func(*cobra.Command, []string) error {
-			fmt.Fprintf(out, "orchard %s (commit %s, built %s)\n", version, commit, date)
+			fmt.Fprintf(out, "arboretum %s (commit %s, built %s)\n", version, commit, date)
 			return nil
 		},
 	}

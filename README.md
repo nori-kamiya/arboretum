@@ -1,4 +1,4 @@
-# orchard
+# arboretum
 
 `docker-compose`, backed by Apple's [`container`](https://github.com/apple/container)
 runtime. Parses compose files with the official compose-spec parser and
@@ -7,7 +7,7 @@ lightweight VM with **per-service memory/CPU limits** and zero idle footprint.
 
 Motivation: colima reserves a fixed VM (e.g. 4 GiB) for its whole lifetime.
 Apple `container` runs one VM per container, sized per service (`--memory 256m
---cpus 1`) and freed on stop. orchard brings the `docker compose` ergonomics on
+--cpus 1`) and freed on stop. arboretum brings the `docker compose` ergonomics on
 top of that model.
 
 ## Status
@@ -22,14 +22,14 @@ service `labels` translation. See `docs/STATUS.md` for the roadmap.
 Use `--dry-run` to print the exact `container` commands without executing them:
 
 ```sh
-orchard up --dry-run -f examples/compose.yaml
+arboretum up --dry-run -f examples/compose.yaml
 ```
 
 ## Requirements
 
 - macOS 26 (Tahoe) for full container-to-container networking / DNS.
-- Apple `container` installed (`container` on PATH). orchard never needs Docker.
-  If it is missing, orchard prints step-by-step install guidance (and `--dry-run`
+- Apple `container` installed (`container` on PATH). arboretum never needs Docker.
+  If it is missing, arboretum prints step-by-step install guidance (and `--dry-run`
   works without it).
 
 ## Install
@@ -37,7 +37,7 @@ orchard up --dry-run -f examples/compose.yaml
 ### Script (latest release)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/nori-kamiya/orchard/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/nori-kamiya/arboretum/main/install.sh | sh
 ```
 
 Installs into `~/.local/bin` (override with `BINDIR=...`) and verifies the
@@ -46,35 +46,38 @@ release checksum.
 ### Manual download
 
 Grab the archive for your Mac from the
-[releases page](https://github.com/nori-kamiya/orchard/releases), then:
+[releases page](https://github.com/nori-kamiya/arboretum/releases), then:
 
 ```sh
-tar -xzf orchard_*_darwin_arm64.tar.gz
-xattr -d com.apple.quarantine ./orchard   # binaries are not notarized yet
-sudo mv orchard /usr/local/bin/
+tar -xzf arboretum_*_darwin_arm64.tar.gz
+xattr -d com.apple.quarantine ./arboretum   # binaries are not notarized yet
+sudo mv arboretum /usr/local/bin/
 ```
 
 ### From source
 
 ```sh
-go install github.com/nori-kamiya/orchard@latest   # needs Go 1.26+
+go install github.com/nori-kamiya/arboretum@latest   # needs Go 1.26+
 # or, from a clone, with version metadata baked in:
 make install
 ```
 
-Verify with `orchard version`.
+Verify with `arboretum version`.
 
 ## Usage
 
+`arbo` is a shorthand for `arboretum` — the two are interchangeable (e.g.
+`arbo up -d`). The examples below use the long form.
+
 ```sh
-orchard up -d            # build, create network/volumes, start in dep order
-orchard ps               # table: SERVICE / NAME / STATE / PORTS
-orchard ps -q            # names only;  ps --format json for scripting
-orchard logs --follow    # tail logs (colored, per-service prefixes)
-orchard exec db psql     # run a command in a running service container
-orchard stop|start|restart   # operate on existing containers (no teardown)
-orchard config           # print the resolved compose (--services, --format json)
-orchard down             # stop + remove containers and the network
+arboretum up -d            # build, create network/volumes, start in dep order
+arboretum ps               # table: SERVICE / NAME / STATE / PORTS
+arboretum ps -q            # names only;  ps --format json for scripting
+arboretum logs --follow    # tail logs (colored, per-service prefixes)
+arboretum exec db psql     # run a command in a running service container
+arboretum stop|start|restart   # operate on existing containers (no teardown)
+arboretum config           # print the resolved compose (--services, --format json)
+arboretum down             # stop + remove containers and the network
 ```
 
 Flags: `-f/--file` (repeatable), `-p/--project-name`, `--profile` (repeatable),
@@ -88,16 +91,16 @@ running after the first image build — it isn't part of any compose project, so
 `down` leaves it alone (matching compose semantics). Manage it explicitly:
 
 ```sh
-orchard builder status   # show the builder's state
-orchard builder stop     # stop it (frees its ~2 GB)
-orchard builder start    # start it again
-orchard builder delete   # remove it entirely
+arboretum builder status   # show the builder's state
+arboretum builder stop     # stop it (frees its ~2 GB)
+arboretum builder start    # start it again
+arboretum builder delete   # remove it entirely
 
-orchard down --prune-builder   # tear down the project AND stop the builder
+arboretum down --prune-builder   # tear down the project AND stop the builder
 ```
 
 These live in their own namespace — like `docker compose` vs `docker builder` —
-so adding them keeps orchard a strict superset of the compose CLI surface.
+so adding them keeps arboretum a strict superset of the compose CLI surface.
 
 ## Development
 
@@ -134,7 +137,7 @@ Releases are cut by [GoReleaser](https://goreleaser.com) and GitHub Actions:
 Dry-run the whole pipeline locally first: `make snapshot` (writes `./dist`,
 uploads nothing). Validate the config with `make release-check`.
 
-Optional Homebrew tap publishing (`brew install nori-kamiya/tap/orchard`) is
+Optional Homebrew tap publishing (`brew install nori-kamiya/tap/arboretum`) is
 pre-wired but commented out in `.goreleaser.yaml`; enable it once you've created
 a `homebrew-tap` repo and a `HOMEBREW_TAP_GITHUB_TOKEN` secret.
 

@@ -172,7 +172,7 @@ func TestAsExitError_FalseForPlainError(t *testing.T) {
 
 func TestEnsureInstalled_DryRunSkips(t *testing.T) {
 	DryRun = true
-	Bin = "orchard-no-such-binary-zzz"
+	Bin = "arboretum-no-such-binary-zzz"
 	t.Cleanup(func() { DryRun = false; Bin = "container" })
 	if err := EnsureInstalled(); err != nil {
 		t.Fatalf("dry-run should skip the check, got %v", err)
@@ -188,7 +188,7 @@ func TestEnsureInstalled_PresentBinary(t *testing.T) {
 }
 
 func TestEnsureInstalled_MissingBinaryGuides(t *testing.T) {
-	Bin = "orchard-no-such-binary-zzz"
+	Bin = "arboretum-no-such-binary-zzz"
 	t.Cleanup(func() { Bin = "container" })
 	err := EnsureInstalled()
 	var ni *NotInstalledError
@@ -233,8 +233,8 @@ func TestDNSDomainExists_EmptyErrorAndBadJSON(t *testing.T) {
 func TestListByProject_FiltersByLabel_MapForm(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
 		return []byte(`[
-			{"name":"db","labels":{"orchard.project":"demo","orchard.service":"db"}},
-			{"name":"other","labels":{"orchard.project":"x"}}
+			{"name":"db","labels":{"arboretum.project":"demo","arboretum.service":"db"}},
+			{"name":"other","labels":{"arboretum.project":"x"}}
 		]`), nil
 	})
 	cs, err := ListByProject(context.Background(), "demo")
@@ -252,8 +252,8 @@ func TestListByProject_NestedConfigurationSchema(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
 		return []byte(`[
 			{"id":"web","status":{"state":"running"},
-			 "configuration":{"id":"web","labels":{"orchard.project":"demo","orchard.service":"web"}}},
-			{"id":"other","configuration":{"labels":{"orchard.project":"x"}}}
+			 "configuration":{"id":"web","labels":{"arboretum.project":"demo","arboretum.service":"web"}}},
+			{"id":"other","configuration":{"labels":{"arboretum.project":"x"}}}
 		]`), nil
 	})
 	cs, err := ListByProject(context.Background(), "demo")
@@ -290,7 +290,7 @@ func TestEnsureNetwork_AlreadyExists_NestedSchema(t *testing.T) {
 
 func TestListByProject_ListForm(t *testing.T) {
 	swapExec(t, func(_ context.Context, _ bool, _ ...string) ([]byte, error) {
-		return []byte(`[{"name":"db","labels":["orchard.project=demo","bad"]}]`), nil
+		return []byte(`[{"name":"db","labels":["arboretum.project=demo","bad"]}]`), nil
 	})
 	cs, err := ListByProject(context.Background(), "demo")
 	if err != nil || len(cs) != 1 {
@@ -390,7 +390,7 @@ func TestEnsureVolume(t *testing.T) {
 	if err := EnsureVolume(context.Background(), "dbdata", "demo"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, " ") != "volume create --label orchard.project=demo dbdata" {
+	if strings.Join(got, " ") != "volume create --label arboretum.project=demo dbdata" {
 		t.Fatalf("args = %v", got)
 	}
 }

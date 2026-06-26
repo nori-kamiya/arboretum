@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nori-kamiya/orchard/internal/backend"
+	"github.com/nori-kamiya/arboretum/internal/backend"
 )
 
 const composeFile = "examples/compose.yaml"
@@ -21,8 +21,8 @@ func runCLI(args ...string) (int, string, string) {
 // Feature: bringing a stack up
 //
 //	Given a compose file describing api/db/redis with per-service limits
-//	When the user runs `orchard up --dry-run`
-//	Then orchard emits the exact `container` commands, in dependency order,
+//	When the user runs `arboretum up --dry-run`
+//	Then arboretum emits the exact `container` commands, in dependency order,
 //	     honoring each service's memory/cpu limit.
 func TestUp_DryRun_EmitsExpectedCommands(t *testing.T) {
 	code, out, errOut := runCLI("up", "--dry-run", "-f", composeFile)
@@ -31,8 +31,8 @@ func TestUp_DryRun_EmitsExpectedCommands(t *testing.T) {
 	}
 
 	mustContain(t, out,
-		"container network create --label orchard.project=demo demo_default",
-		"container volume create --label orchard.project=demo dbdata",
+		"container network create --label arboretum.project=demo demo_default",
+		"container volume create --label arboretum.project=demo dbdata",
 		"--name db.demo --network demo_default --dns-domain demo",
 		"--memory 512m --cpus 1", // db limits (0.5 cpus rounds up to whole CPU)
 		"--memory 256m",            // redis limit
@@ -114,7 +114,7 @@ func TestExec_MissingArgs(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (needs SERVICE + COMMAND)", code)
 	}
-	if !strings.Contains(errOut, "orchard:") {
+	if !strings.Contains(errOut, "arboretum:") {
 		t.Fatalf("stderr = %q", errOut)
 	}
 }
@@ -124,7 +124,7 @@ func TestExec_LoadError(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if !strings.Contains(errOut, "orchard:") {
+	if !strings.Contains(errOut, "arboretum:") {
 		t.Fatalf("stderr = %q", errOut)
 	}
 }
@@ -167,7 +167,7 @@ func TestEachCommand_LoadError(t *testing.T) {
 		if code != 1 {
 			t.Errorf("%s: exit = %d, want 1", sub, code)
 		}
-		if !strings.Contains(errOut, "orchard:") {
+		if !strings.Contains(errOut, "arboretum:") {
 			t.Errorf("%s: stderr = %q", sub, errOut)
 		}
 	}
@@ -177,17 +177,17 @@ func TestEachCommand_LoadError(t *testing.T) {
 //
 //	Given the container CLI is missing from PATH
 //	When the user runs a real (non-dry-run) command
-//	Then orchard fails fast and tells them how to install it.
+//	Then arboretum fails fast and tells them how to install it.
 func TestPreflight_GuidesWhenContainerMissing(t *testing.T) {
 	oldBin := backend.Bin
-	backend.Bin = "orchard-no-such-binary-zzz"
+	backend.Bin = "arboretum-no-such-binary-zzz"
 	t.Cleanup(func() { backend.Bin = oldBin; backend.DryRun = false })
 
 	code, _, errOut := runCLI("up", "-f", composeFile) // note: no --dry-run
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	for _, want := range []string{"orchard:", "not installed", "github.com/apple/container"} {
+	for _, want := range []string{"arboretum:", "not installed", "github.com/apple/container"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr missing %q:\n%s", want, errOut)
 		}
@@ -197,7 +197,7 @@ func TestPreflight_GuidesWhenContainerMissing(t *testing.T) {
 // Dry-run must still work without `container` installed (the check is skipped).
 func TestPreflight_DryRunWorksWithoutContainer(t *testing.T) {
 	oldBin := backend.Bin
-	backend.Bin = "orchard-no-such-binary-zzz"
+	backend.Bin = "arboretum-no-such-binary-zzz"
 	t.Cleanup(func() { backend.Bin = oldBin; backend.DryRun = false })
 
 	code, out, errOut := runCLI("up", "--dry-run", "-f", composeFile)
@@ -223,7 +223,7 @@ func TestBuilder_Subcommands_DryRun(t *testing.T) {
 
 func TestBuilder_PreflightGuidesWhenMissing(t *testing.T) {
 	oldBin := backend.Bin
-	backend.Bin = "orchard-no-such-binary-zzz"
+	backend.Bin = "arboretum-no-such-binary-zzz"
 	t.Cleanup(func() { backend.Bin = oldBin; backend.DryRun = false })
 
 	code, _, errOut := runCLI("builder", "stop") // real run, no --dry-run
@@ -251,7 +251,7 @@ func TestVersion_Command(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errOut)
 	}
-	if !strings.Contains(out, "orchard dev (commit none, built unknown)") {
+	if !strings.Contains(out, "arboretum dev (commit none, built unknown)") {
 		t.Fatalf("version output = %q", out)
 	}
 }
@@ -261,7 +261,7 @@ func TestVersion_Flag(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errOut)
 	}
-	if !strings.Contains(out, "orchard version dev") {
+	if !strings.Contains(out, "arboretum version dev") {
 		t.Fatalf("--version output = %q", out)
 	}
 }
@@ -270,7 +270,7 @@ func TestMain_WiringCoversEntrypoint(t *testing.T) {
 	var code int
 	oldExit, oldArgs := osExit, os.Args
 	osExit = func(c int) { code = c }
-	os.Args = []string{"orchard", "--help"}
+	os.Args = []string{"arboretum", "--help"}
 	t.Cleanup(func() { osExit, os.Args = oldExit, oldArgs })
 
 	main()

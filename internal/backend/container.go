@@ -119,7 +119,7 @@ type NotInstalledError struct{ Bin string }
 func (e *NotInstalledError) Error() string {
 	b := e.Bin
 	return "Apple `" + b + "` is not installed (not found on PATH).\n\n" +
-		"orchard drives Apple's container runtime, so it must be installed first:\n\n" +
+		"arboretum drives Apple's container runtime, so it must be installed first:\n\n" +
 		"  1. Requires macOS 26 (Tahoe) or later on Apple silicon.\n" +
 		"  2. Install the latest release:\n" +
 		"       - download the signed .pkg from\n" +
@@ -232,8 +232,8 @@ func EnsureVolume(ctx context.Context, name, project string) error {
 
 // Label keys used to track resources we own.
 const (
-	LabelProject = "orchard.project"
-	LabelService = "orchard.service"
+	LabelProject = "arboretum.project"
+	LabelService = "arboretum.service"
 )
 
 // resolveConfig returns the nested "configuration" object when present (where

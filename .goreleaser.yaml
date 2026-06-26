@@ -1,10 +1,10 @@
-# GoReleaser config for orchard. Build & publish with:
+# GoReleaser config for arboretum. Build & publish with:
 #   goreleaser release --snapshot --clean   # local dry-run, no upload
 #   git tag v0.1.0 && git push --tags        # CI (.github/workflows/release.yml) publishes
 # Docs: https://goreleaser.com
 version: 2
 
-project_name: orchard
+project_name: arboretum
 
 before:
   hooks:
@@ -12,9 +12,9 @@ before:
     - go test ./...
 
 builds:
-  - id: orchard
+  - id: arboretum
     main: .
-    binary: orchard
+    binary: arboretum
     env:
       - CGO_ENABLED=0 # pure Go, so darwin binaries cross-compile from any host
     goos:
@@ -30,10 +30,26 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
+  # `arbo` is the same program under a shorthand name, shipped alongside so
+  # downloaded archives provide both `arboretum` and `arbo`.
+  - id: arbo
+    main: .
+    binary: arbo
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin]
+    goarch: [arm64, amd64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
 
 archives:
-  - id: orchard
+  - id: arboretum
     formats: [tar.gz]
+    ids: [arboretum, arbo]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -57,33 +73,33 @@ changelog:
 release:
   github:
     owner: nori-kamiya
-    name: orchard
+    name: arboretum
   draft: false
   prerelease: auto
   header: |
-    orchard {{ .Tag }} — docker-compose, backed by Apple's `container`.
+    arboretum {{ .Tag }} — docker-compose, backed by Apple's `container`.
 
     Requires macOS 26 (Tahoe) on Apple silicon with Apple `container` installed.
     The binaries are **not notarized**; on first run clear the quarantine flag:
-    `xattr -d com.apple.quarantine ./orchard`.
+    `xattr -d com.apple.quarantine ./arboretum`.
 
 # Homebrew tap publishing. Opt-in: uncomment after you have
 #   1. created the repo  github.com/nori-kamiya/homebrew-tap
 #   2. added a HOMEBREW_TAP_GITHUB_TOKEN secret (PAT with `repo` scope) and wired
 #      it into the release workflow's env.
-# Then users can `brew install nori-kamiya/tap/orchard`.
+# Then users can `brew install nori-kamiya/tap/arboretum`.
 #
 # brews:
-#   - name: orchard
+#   - name: arboretum
 #     repository:
 #       owner: nori-kamiya
 #       name: homebrew-tap
 #       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-#     homepage: "https://github.com/nori-kamiya/orchard"
+#     homepage: "https://github.com/nori-kamiya/arboretum"
 #     description: "docker-compose, backed by Apple's container runtime"
 #     license: "MIT"
 #     skip_upload: auto
 #     install: |
-#       bin.install "orchard"
+#       bin.install "arboretum"
 #     test: |
-#       system "#{bin}/orchard", "version"
+#       system "#{bin}/arboretum", "version"

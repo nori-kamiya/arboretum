@@ -1,4 +1,4 @@
-module github.com/nori-kamiya/orchard
+module github.com/nori-kamiya/arboretum
 
 go 1.26
 

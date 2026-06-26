@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/nori-kamiya/orchard/internal/backend"
+	"github.com/nori-kamiya/arboretum/internal/backend"
 )
 
 func networkName(p *types.Project) string { return p.Name + "_default" }
@@ -77,9 +77,9 @@ func Up(ctx context.Context, p *types.Project, detach bool) error {
 			}
 		}
 		if pol := restartPolicy(svc); pol != "" {
-			// Apple container has no restart policy and orchard is not a daemon,
+			// Apple container has no restart policy and arboretum is not a daemon,
 			// so we can't honor it — warn rather than silently drop it.
-			fmt.Fprintf(backend.Stdout, "orchard: warning: service %q requests restart %q, which Apple container does not support; ignoring\n", name, pol)
+			fmt.Fprintf(backend.Stdout, "arboretum: warning: service %q requests restart %q, which Apple container does not support; ignoring\n", name, pol)
 		}
 		if svc.Image == "" && svc.Build != nil {
 			if err := build(ctx, p, svc); err != nil {
@@ -384,7 +384,7 @@ type ConfigOptions struct {
 }
 
 // Config renders the merged, profile/override-resolved project so users can see
-// exactly what orchard will act on.
+// exactly what arboretum will act on.
 func Config(p *types.Project, out io.Writer, opts ConfigOptions) error {
 	if opts.ServicesOnly {
 		for _, name := range sortedServiceNames(p) {
@@ -426,7 +426,7 @@ func hintServiceDNS(ctx context.Context, p *types.Project) {
 	if ok, err := backend.DNSDomainExists(ctx, p.Name); err != nil || ok {
 		return
 	}
-	fmt.Fprintf(backend.Stdout, "orchard: hint: run `sudo container system dns create %s` to let services reach each other by name\n", p.Name)
+	fmt.Fprintf(backend.Stdout, "arboretum: hint: run `sudo container system dns create %s` to let services reach each other by name\n", p.Name)
 }
 
 // restartPolicy returns a human description of a service's requested restart
