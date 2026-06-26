@@ -178,6 +178,12 @@ arboretum down --prune-builder   # プロジェクト撤去 + ビルダー停止
 これらは独立した名前空間に置いています（`docker compose` と `docker builder` の関係と
 同じ）。そのため追加しても arboretum は compose CLI の厳密な上位互換のままです。
 
+## 自動化 / AI エージェント
+
+CLI は自動化向き（`--dry-run`・`--format json`・明確な exit code）です。エージェントや
+スクリプトから駆動する場合は [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) を、コーディング
+エージェントで開発に参加する場合は [`AGENTS.md`](AGENTS.md) を参照してください。
+
 ## 開発
 
 TDD/BDD、**ステートメントカバレッジ 100%** がこのリポジトリの基準です。

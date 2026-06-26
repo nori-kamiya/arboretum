@@ -184,6 +184,12 @@ arboretum down --prune-builder   # tear down the project AND stop the builder
 These live in their own namespace — like `docker compose` vs `docker builder` —
 so adding them keeps arboretum a strict superset of the compose CLI surface.
 
+## Automation / AI agents
+
+The CLI is automation-friendly (`--dry-run`, `--format json`, clear exit codes).
+Driving it from an agent or script? See [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md).
+Contributing with a coding agent? See [`AGENTS.md`](AGENTS.md).
+
 ## Development
 
 TDD/BDD, **100% statement coverage** is the standard for this repo.
