@@ -6,8 +6,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"sort"
-	"strings"
+	"strconv"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/nori-kamiya/orchard/internal/backend"
@@ -266,11 +267,15 @@ func memLimit(svc types.ServiceConfig) string {
 	return humanBytes(int64(b))
 }
 
+// cpuLimit maps a compose CPU limit to `container`'s --cpus, which accepts only
+// whole CPUs (unlike Docker's fractional --cpus). We round a fractional limit up
+// so we never under-provision (e.g. cpus: "0.5" -> "1").
 func cpuLimit(svc types.ServiceConfig) string {
-	if lim := limits(svc); lim != nil && lim.NanoCPUs > 0 {
-		return trimFloat(float64(lim.NanoCPUs))
+	lim := limits(svc)
+	if lim == nil || lim.NanoCPUs <= 0 {
+		return ""
 	}
-	return ""
+	return strconv.Itoa(int(math.Ceil(float64(lim.NanoCPUs))))
 }
 
 func limits(svc types.ServiceConfig) *types.Resource {
@@ -296,12 +301,6 @@ func humanBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d", b)
 	}
-}
-
-func trimFloat(f float64) string {
-	s := fmt.Sprintf("%.3f", f)
-	s = strings.TrimRight(s, "0")
-	return strings.TrimRight(s, ".")
 }
 
 // --- ordering helpers ------------------------------------------------------

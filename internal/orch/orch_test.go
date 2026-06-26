@@ -46,15 +46,6 @@ func TestHumanBytes(t *testing.T) {
 	}
 }
 
-func TestTrimFloat(t *testing.T) {
-	cases := map[float64]string{1: "1", 0.5: "0.5", 0.25: "0.25"}
-	for in, want := range cases {
-		if got := trimFloat(in); got != want {
-			t.Errorf("trimFloat(%v) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestImageRef(t *testing.T) {
 	p := &types.Project{Name: "demo"}
 	if got := imageRef(p, types.ServiceConfig{Image: "redis:7"}); got != "redis:7" {
@@ -84,8 +75,12 @@ func TestMemLimit(t *testing.T) {
 }
 
 func TestCPULimit(t *testing.T) {
-	if got := cpuLimit(types.ServiceConfig{Deploy: limitFor(0, 1)}); got != "1" {
-		t.Errorf("deploy cpus = %q", got)
+	// Apple container takes whole CPUs; fractional compose limits round up.
+	cases := map[types.NanoCPUs]string{1: "1", 2: "2", 0.5: "1", 0.1: "1", 1.5: "2"}
+	for in, want := range cases {
+		if got := cpuLimit(types.ServiceConfig{Deploy: limitFor(0, in)}); got != want {
+			t.Errorf("cpuLimit(%v) = %q, want %q", in, got, want)
+		}
 	}
 	if got := cpuLimit(types.ServiceConfig{}); got != "" {
 		t.Errorf("no cpus = %q", got)

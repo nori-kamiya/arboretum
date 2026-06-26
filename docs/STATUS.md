@@ -79,8 +79,16 @@ Priority order:
      `up` re-created the network.
    - `up` now skips running containers and (re)starts stopped ones instead of
      failing with "container with id X already exists".
-   Still to confirm on a multi-service net: service-name DNS resolution, and
-   `--memory`/`--cpus` unit acceptance under load (flags emit & containers run).
+   - ~~`--memory`/`--cpus` acceptance~~ — VERIFIED. `--memory 512m` accepted;
+     limits visibly applied (`container ls` showed 512 MB / 1 CPU vs default
+     1024 MB / 4). **Bug fixed:** Apple `container --cpus` takes whole CPUs only
+     (rejected `0.5`), so `cpuLimit` now rounds fractional compose limits up
+     (`0.5` → `1`), never under-provisioning. `trimFloat` removed.
+   - **Service-name DNS — needs host setup (see Phase 2 #8).** The embedded DNS
+     (192.168.65.1) returns NXDOMAIN for bare service names until a *local DNS
+     domain* is created: `sudo container system dns create <domain>` (admin
+     only), and containers must run with `--dns-domain <domain>`. orchard does
+     not pass `--dns-domain` yet — tracked as the cross-project/DNS work.
 2. **Foreground `up` log multiplexing** — interleave `container logs -f` per
    service with colored `name |` prefixes; Ctrl-C → stop all. (Currently Logs
    tails services sequentially — see `orch.Logs` TODO.)

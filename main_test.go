@@ -34,7 +34,7 @@ func TestUp_DryRun_EmitsExpectedCommands(t *testing.T) {
 		"container network create --label orchard.project=demo demo_default",
 		"container volume create --label orchard.project=demo dbdata",
 		"--name db --network demo_default",
-		"--memory 512m --cpus 0.5", // db limits from compose
+		"--memory 512m --cpus 1", // db limits (0.5 cpus rounds up to whole CPU)
 		"--memory 256m",            // redis limit
 		"container build -t demo-api -f Dockerfile",
 		"--name api --network demo_default",
