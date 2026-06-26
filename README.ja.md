@@ -91,6 +91,40 @@ arboretum down -v              # コンテナ・network・volume を削除
 
 フラグ: `-f/--file`（複数可）、`-p/--project-name`、`--profile`（複数可）、`--dry-run`。
 
+### サービス間ネットワークと DNS（プロジェクトごとに一度だけ事前設定）
+
+コンテナは `<service>.<project>` という名前で起動します。サービスに**名前でアクセス**する
+には（host からでも、別コンテナからでも）、先にそのプロジェクトのローカル DNS ドメインを
+**一度だけ**作成する必要があります（`sudo` が必要。`/etc/resolver/<project>` を書くため
+で、Apple `container` 側の要件です）:
+
+```sh
+sudo container system dns create foo     # プロジェクト名ごとに一度だけ
+arboretum up -d -f foo/compose.yaml
+```
+
+以降、各サービスに `http://<service>.<project>:<port>` でアクセスできます。コンテナ自身の
+ポートに直接届くので、`ports:` の publish も、プロジェクト間の `localhost` ポート衝突も
+不要です:
+
+```sh
+# プロジェクト "foo" と "bar" を、どちらも :3000 で、同時に:
+curl http://web.foo:3000
+curl http://api.foo:3000
+curl http://web.bar:3000
+```
+
+注意:
+
+- **プロジェクト名ごと**に必要で、`sudo` が要るのは `dns create`/`delete` だけです。
+  通常の `up`/`down`/`ps`/… は sudo 不要。ドメイン未作成時は `up` が作成コマンドを
+  ヒント表示します。
+- ドメインが無くてもコンテナは起動し、**IP では**通信できます。名前解決だけが使えません。
+- アドレスは `<service>.<project>`（例 `web.foo`）です。**プロジェクト名だけ**（`foo`
+  単体）では解決しません。
+- DNS/sudo を使いたくない場合は、ホストポートを分けて publish し `localhost` で区別します
+  （例 `3000:3000` と `3001:3000` → `localhost:3000` / `:3001`）。
+
 ### compose ファイルの探索
 
 `-f` 無しの場合、作業ディレクトリの `compose.yaml` → `compose.yml` →

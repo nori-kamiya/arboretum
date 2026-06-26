@@ -94,6 +94,41 @@ containers for services no longer in the file unless you pass `--remove-orphans`
 Flags: `-f/--file` (repeatable), `-p/--project-name`, `--profile` (repeatable),
 `--dry-run`.
 
+### Service networking & DNS (one-time setup per project)
+
+Containers are named `<service>.<project>`. To reach a service **by name** —
+from the host or from another container — you must first create the project's
+local DNS domain **once** (this needs `sudo`; it's an Apple `container`
+requirement, since it writes `/etc/resolver/<project>`):
+
+```sh
+sudo container system dns create foo     # do this once per project name
+arboretum up -d -f foo/compose.yaml
+```
+
+Then reach each service at `http://<service>.<project>:<port>`, hitting the
+container's own port directly (no `ports:` publishing, no `localhost` collision
+between projects):
+
+```sh
+# project "foo" and project "bar", both serving on :3000, at the same time:
+curl http://web.foo:3000
+curl http://api.foo:3000
+curl http://web.bar:3000
+```
+
+Notes:
+
+- It's **per project name**, and `sudo` is needed only for `dns create`/`delete`
+  — normal `up`/`down`/`ps`/… never need sudo. `up` prints the exact
+  `dns create` command when the domain is missing.
+- Without the domain, containers still start and can talk **by IP**; only
+  name resolution is unavailable.
+- The address is `<service>.<project>` (e.g. `web.foo`), **not** the bare project
+  name (`foo` alone does not resolve).
+- Don't want DNS/sudo? Publish ports on distinct host ports instead and use
+  `localhost` (e.g. `3000:3000` and `3001:3000` → `localhost:3000` / `:3001`).
+
 ### Compose file discovery
 
 With no `-f`, arboretum auto-discovers, in order, `compose.yaml`, `compose.yml`,
