@@ -265,6 +265,21 @@ Verified end-to-end against Apple `container` 1.0.0 on macOS 26 (arm64).
   CLI, not a supervising daemon).
 - **`service_completed_successfully`** confirms the dependency exited, but not that
   it exited `0` (the runtime doesn't expose the exit code).
+- **Named volumes are pre-formatted block devices, not empty directories** — a
+  fresh volume already contains a `lost+found` entry. Apps that refuse a
+  non-empty data directory choke on this; Postgres's `initdb` is the common
+  case (`initdb: error: directory ... exists but is not empty`). Point `PGDATA`
+  at a subdirectory of the mount to work around it:
+
+  ```yaml
+  services:
+    db:
+      image: postgres:16-alpine
+      environment:
+        PGDATA: /var/lib/postgresql/data/pgdata
+      volumes:
+        - db_data:/var/lib/postgresql/data
+  ```
 
 ### ❌ Not yet supported
 
