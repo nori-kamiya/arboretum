@@ -703,7 +703,19 @@ func TestBuild_WithDockerfileAndContext(t *testing.T) {
 	p := &types.Project{Name: "demo"}
 	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{Context: "./app", Dockerfile: "Dockerfile.dev"}}
 	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
-	if strings.TrimSpace(out) != "container build -t demo-api -f Dockerfile.dev ./app" {
+	// container build's -f resolves relative to the CWD, not the context-dir
+	// positional arg, so the compose-relative-to-context dockerfile path must
+	// be joined with the context before being passed through.
+	if strings.TrimSpace(out) != "container build -t demo-api -f app/Dockerfile.dev ./app" {
+		t.Fatalf("build cmd = %q", out)
+	}
+}
+
+func TestBuild_AbsoluteDockerfileIsNotJoinedWithContext(t *testing.T) {
+	p := &types.Project{Name: "demo"}
+	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{Context: "./app", Dockerfile: "/abs/Dockerfile.dev"}}
+	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
+	if strings.TrimSpace(out) != "container build -t demo-api -f /abs/Dockerfile.dev ./app" {
 		t.Fatalf("build cmd = %q", out)
 	}
 }

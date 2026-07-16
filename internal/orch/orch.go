@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"io"
 	"math"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -662,9 +663,20 @@ func durationOr(d *types.Duration, def time.Duration) time.Duration {
 }
 
 func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error {
+	ctxDir := svc.Build.Context
+	if ctxDir == "" {
+		ctxDir = "."
+	}
 	args := []string{"build", "-t", imageRef(p, svc)}
 	if svc.Build.Dockerfile != "" {
-		args = append(args, "-f", svc.Build.Dockerfile)
+		// Compose defines `dockerfile` relative to `context`, but `container
+		// build`'s -f resolves relative to the CWD, not the context-dir
+		// positional arg — so it must be joined here.
+		dockerfile := svc.Build.Dockerfile
+		if !filepath.IsAbs(dockerfile) {
+			dockerfile = filepath.Join(ctxDir, dockerfile)
+		}
+		args = append(args, "-f", dockerfile)
 	}
 	if svc.Build.Target != "" {
 		args = append(args, "--target", svc.Build.Target)
@@ -678,10 +690,6 @@ func build(ctx context.Context, p *types.Project, svc types.ServiceConfig) error
 	}
 	for _, k := range sortedKeys(svc.Build.Labels) {
 		args = append(args, "--label", k+"="+svc.Build.Labels[k])
-	}
-	ctxDir := svc.Build.Context
-	if ctxDir == "" {
-		ctxDir = "."
 	}
 	args = append(args, ctxDir)
 	return backend.Run(ctx, args...)

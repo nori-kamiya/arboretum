@@ -36,7 +36,8 @@ func TestUp_DryRun_EmitsExpectedCommands(t *testing.T) {
 		"--name db.demo --network demo_default --dns-domain demo",
 		"--memory 512m --cpus 1", // db limits (0.5 cpus rounds up to whole CPU)
 		"--memory 256m",            // redis limit
-		"container build -t demo-api -f Dockerfile",
+		"container build -t demo-api -f",
+		"examples/Dockerfile", // dockerfile joined with (compose-go's resolved, absolute) context dir
 		"--name api.demo --network demo_default --dns-domain demo",
 		"--memory 512m --cpus 1", // api limits
 		"--publish 8080:3000",
