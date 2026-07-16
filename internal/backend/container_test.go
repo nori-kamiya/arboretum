@@ -423,6 +423,61 @@ func TestEnsureVolume(t *testing.T) {
 	}
 }
 
+func TestEnsureVolume_AlreadyExists(t *testing.T) {
+	var createCalled bool
+	swapExec(t, func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "volume" && args[1] == "list" {
+			return []byte(`[{"name":"dbdata"}]`), nil
+		}
+		if len(args) >= 2 && args[1] == "create" {
+			createCalled = true
+		}
+		return nil, nil
+	})
+	if err := EnsureVolume(context.Background(), "dbdata", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if createCalled {
+		t.Fatal("should not re-create an existing volume")
+	}
+}
+
+func TestEnsureVolume_CreatesWhenMissing(t *testing.T) {
+	var createCalled bool
+	swapExec(t, func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[1] == "list" {
+			return []byte(`[]`), nil
+		}
+		if len(args) >= 2 && args[1] == "create" {
+			createCalled = true
+		}
+		return nil, nil
+	})
+	if err := EnsureVolume(context.Background(), "dbdata", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if !createCalled {
+		t.Fatal("expected volume create")
+	}
+}
+
+func TestEnsureVolume_ListErrorStillCreates(t *testing.T) {
+	var createCalled bool
+	swapExec(t, func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[1] == "list" {
+			return nil, errors.New("nope")
+		}
+		createCalled = true
+		return nil, nil
+	})
+	if err := EnsureVolume(context.Background(), "dbdata", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if !createCalled {
+		t.Fatal("expected create after list error")
+	}
+}
+
 func TestFirstString_NoMatch(t *testing.T) {
 	if firstString(map[string]any{"x": 1}, "name", "Name") != "" {
 		t.Fatal("want empty")

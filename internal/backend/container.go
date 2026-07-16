@@ -225,8 +225,21 @@ func EnsureNetwork(ctx context.Context, name, project string) error {
 	return Run(ctx, "network", "create", "--label", LabelProject+"="+project, name)
 }
 
-// EnsureVolume creates a named volume if missing (best-effort/idempotent).
+// EnsureVolume creates a named volume if missing (idempotent). `container
+// volume create` errors when the volume already exists, so — like
+// EnsureNetwork — we check first and skip creation on a hit.
 func EnsureVolume(ctx context.Context, name, project string) error {
+	out, err := Output(ctx, "volume", "list", "--format", "json")
+	if err == nil && len(out) > 0 {
+		var vols []map[string]any
+		if json.Unmarshal(out, &vols) == nil {
+			for _, v := range vols {
+				if nameOf(v) == name {
+					return nil
+				}
+			}
+		}
+	}
 	return Run(ctx, "volume", "create", "--label", LabelProject+"="+project, name)
 }
 
