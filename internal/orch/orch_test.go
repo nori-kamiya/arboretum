@@ -1133,18 +1133,27 @@ func TestStopStartRestart(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo"}
 
-	if err := Stop(context.Background(), p); err != nil {
+	if err := Stop(context.Background(), p, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(actions, "|") != "stop a.demo|stop b.demo" { // sorted
 		t.Fatalf("stop actions = %v", actions)
 	}
 	actions = nil
-	if err := Restart(context.Background(), p); err != nil {
+	if err := Restart(context.Background(), p, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(actions, "|") != "stop a.demo|stop b.demo|start a.demo|start b.demo" {
 		t.Fatalf("restart actions = %v", actions)
+	}
+
+	// Given services, only their containers are touched.
+	actions = nil
+	if err := Restart(context.Background(), p, []string{"b"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(actions, "|") != "stop b.demo|start b.demo" {
+		t.Fatalf("restart b actions = %v", actions)
 	}
 }
 
@@ -1155,10 +1164,10 @@ func TestForEachContainer_Errors(t *testing.T) {
 	})
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	if err := Stop(context.Background(), &types.Project{Name: "demo"}); err == nil {
+	if err := Stop(context.Background(), &types.Project{Name: "demo"}, nil); err == nil {
 		t.Fatal("expected list error")
 	}
-	if err := Restart(context.Background(), &types.Project{Name: "demo"}); err == nil {
+	if err := Restart(context.Background(), &types.Project{Name: "demo"}, nil); err == nil {
 		t.Fatal("expected restart (stop) error")
 	}
 	restore()
@@ -1170,7 +1179,7 @@ func TestForEachContainer_Errors(t *testing.T) {
 		}
 		return nil, errors.New("action fail")
 	}))
-	if err := Start(context.Background(), &types.Project{Name: "demo"}); err == nil {
+	if err := Start(context.Background(), &types.Project{Name: "demo"}, nil); err == nil {
 		t.Fatal("expected action error")
 	}
 }
@@ -1214,6 +1223,12 @@ func TestDown_VolumesAndOrphans(t *testing.T) {
 	}
 	if !strings.Contains(warn, "orphan container ghost.demo") {
 		t.Fatalf("expected orphan warning, got %q", warn)
+	}
+	// Given services: only db is removed; ghost is not warned about; network
+	// and volumes are left for the rest of the project.
+	calls, warn = run(DownOptions{Services: []string{"db"}, Volumes: true})
+	if calls != "stop db.demo|rm db.demo" || warn != "" {
+		t.Fatalf("down db calls = %q, warn = %q", calls, warn)
 	}
 	// --remove-orphans + --volumes.
 	calls, _ = run(DownOptions{RemoveOrphans: true, Volumes: true})

@@ -16,7 +16,8 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
   `ps` (table SERVICE/NAME/STATE/PORTS, `-q`, `--format json`), `logs`
   (`--follow`), `exec` (`-d`/`-T`/`-e`/`-w`/`-u`, args pass-through via
   non-interspersed flags), `run` (one-off, `-d`/`-T`/`-e`), `stop`/`start`/
-  `restart`, `build`/`pull`, `config` (`--services`, `--format json`), and
+  `restart`, `build`/`pull` (these, `up`, `down` and `logs` take optional
+  `[SERVICE...]`), `config` (`--services`, `--format json`), and
   `builder` (`status`/`start`/`stop`/`delete`) wrapping `container builder`.
   Shell completion via cobra's built-in `completion`.
   `builder` is a deliberate superset (its own namespace, like `docker compose`

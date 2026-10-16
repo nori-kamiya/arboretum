@@ -25,14 +25,14 @@ codebase, see [`AGENTS.md`](../AGENTS.md).
 
 | Command | Purpose | Agent-relevant flags |
 |---|---|---|
-| `up -d` | create network/volumes, build, start in dep order | `-d` (detach), `--force-recreate`, `--dry-run` |
-| `down` | stop+remove containers and network | `-v` (volumes), `--remove-orphans`, `--prune-builder` |
+| `up -d [SERVICE…]` | create network/volumes, build, start in dep order (named services + their `depends_on`) | `-d` (detach), `--force-recreate`, `--dry-run` |
+| `down [SERVICE…]` | stop+remove containers and network (with services: only those containers) | `-v` (volumes), `--remove-orphans`, `--prune-builder` |
 | `ps` | list this project's containers | `-q` (names), `--format json` |
-| `logs` | print logs | `--follow` (streams — manage timeout) |
+| `logs [SERVICE…]` | print logs | `--follow` (streams — manage timeout) |
 | `exec SERVICE CMD…` | run in a running container | `-T` (no TTY), `-d`, `-e/-w/-u` |
 | `run SERVICE [CMD…]` | one-off throwaway container (`--rm`) | `-T` (no TTY), `-d`, `-e` |
-| `start`/`stop`/`restart` | operate on existing containers | — |
-| `build` / `pull` | build / pull images without starting | `--dry-run` |
+| `start`/`stop`/`restart [SERVICE…]` | operate on existing containers (all, or only the named services) | — |
+| `build` / `pull [SERVICE…]` | build / pull images without starting | `--dry-run` |
 | `config` | print the resolved compose | `--services`, `--format json` |
 | `version` | build metadata | — |
 

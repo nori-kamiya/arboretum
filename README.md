@@ -81,6 +81,7 @@ arboretum logs --follow        # tail logs (colored, per-service prefixes)
 arboretum exec db psql         # run a command in a running service container
 arboretum run web sh           # one-off throwaway container for a service
 arboretum stop|start|restart   # operate on existing containers (no teardown)
+arboretum stop db              # only the named services (also up/down/logs/build/pull)
 arboretum build | pull         # build images / pull images, without starting
 arboretum config               # print the resolved compose (--services, --format json)
 arboretum down -v              # stop + remove containers, network, and volumes
@@ -90,6 +91,13 @@ arboretum down -v              # stop + remove containers, network, and volumes
 restarted, and a service whose config changed is recreated automatically (its
 config-hash differs); `--force-recreate` recreates regardless. `down` keeps
 containers for services no longer in the file unless you pass `--remove-orphans`.
+
+`up`, `down`, `logs`, `start`/`stop`/`restart`, `build` and `pull` accept
+`[SERVICE...]` like compose: only those services are acted on (`up` also starts
+their `depends_on`; `down SERVICE` leaves the network and volumes in place). A
+named service gated by a profile is enabled without `--profile`; an unknown
+name is an error. `${VAR}` interpolation reads `.env` next to the compose file,
+with the shell environment taking precedence.
 
 Flags: `-f/--file` (repeatable), `-p/--project-name`, `--profile` (repeatable),
 `--dry-run`.

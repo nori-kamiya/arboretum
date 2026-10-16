@@ -79,6 +79,7 @@ arboretum logs --follow        # ログ追尾（色付き・サービス名プ�
 arboretum exec db psql         # 稼働中コンテナでコマンド実行
 arboretum run web sh           # サービスの使い捨てワンオフコンテナ
 arboretum stop|start|restart   # 既存コンテナを操作（撤去はしない）
+arboretum stop db              # 指定サービスのみ（up/down/logs/build/pull も同様）
 arboretum build | pull         # 起動せずにイメージのビルド / 取得
 arboretum config               # 解決済み compose を出力（--services, --format json）
 arboretum down -v              # コンテナ・network・volume を削除
@@ -88,6 +89,12 @@ arboretum down -v              # コンテナ・network・volume を削除
 自動で作り直します（config-hash の差分で判定）。`--force-recreate` は無条件で作り直します。
 `down` は、compose ファイルに無くなったサービスのコンテナを `--remove-orphans` を付けない
 限り残します。
+
+`up`・`down`・`logs`・`start`/`stop`/`restart`・`build`・`pull` は compose と同じく
+`[SERVICE...]` を受け付け、指定したサービスだけを対象にします（`up` は `depends_on` も起動し、
+`down SERVICE` は network と volume を残します）。profile で隠れたサービスも名前を指定すれば
+`--profile` なしで有効になり、存在しない名前はエラーです。`${VAR}` の展開は compose ファイルと
+同じディレクトリの `.env` を読み、シェルの環境変数が優先されます。
 
 フラグ: `-f/--file`（複数可）、`-p/--project-name`、`--profile`（複数可）、`--dry-run`。
 
