@@ -131,3 +131,28 @@ func TestLoad_OverrideMerges(t *testing.T) {
 		t.Fatalf("override not applied, image = %q", got)
 	}
 }
+
+// Given a .env next to the compose file (and cwd elsewhere)
+// When the project is loaded with -f
+// Then ${VAR} interpolation resolves from that .env, and OS env still wins.
+func TestLoad_GivenDotEnvInProjectDir_WhenLoaded_ThenInterpolatesWithOSPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	path := writeCompose(t, dir, "services:\n  a:\n    image: alpine:3.20\n    environment:\n      R: ${ZR:?set ZR}\n")
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("ZR=fromdotenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, t.TempDir())
+
+	for _, tc := range []struct{ osVal, want string }{{"", "fromdotenv"}, {"fromos", "fromos"}} {
+		if tc.osVal != "" {
+			t.Setenv("ZR", tc.osVal)
+		}
+		p, err := Load(context.Background(), []string{path}, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := *p.Services["a"].Environment["R"]; got != tc.want {
+			t.Fatalf("R = %q, want %q", got, tc.want)
+		}
+	}
+}

@@ -20,16 +20,20 @@ import (
 // compose.override.yaml (and multiple -f files) are merged by compose-go, so no
 // extra handling is needed here.
 func Load(ctx context.Context, files []string, projectName string, profiles []string) (*types.Project, error) {
-	opts := []cli.ProjectOptionsFn{
-		cli.WithOsEnv,
-		cli.WithDotEnv,
-		// After WithOsEnv so COMPOSE_PROFILES is visible; merges flag + env.
-		cli.WithDefaultProfiles(profiles...),
-	}
+	opts := []cli.ProjectOptionsFn{cli.WithOsEnv}
 	if len(files) == 0 {
 		// Discover compose.yaml/docker-compose.yml (+ override) in the working dir.
 		opts = append(opts, cli.WithDefaultConfigPath)
 	}
+	opts = append(opts,
+		// WithDotEnv only reads o.EnvFiles; WithEnvFiles() fills it with the
+		// project dir's .env, which needs the config paths resolved first.
+		// OS env wins over .env (Merge keeps existing keys).
+		cli.WithEnvFiles(),
+		cli.WithDotEnv,
+		// After the env is complete so COMPOSE_PROFILES (OS or .env) is visible.
+		cli.WithDefaultProfiles(profiles...),
+	)
 	if projectName != "" {
 		opts = append(opts, cli.WithName(projectName))
 	}
