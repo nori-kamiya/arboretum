@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,8 +125,14 @@ func Up(ctx context.Context, p *types.Project, detach, forceRecreate bool) error
 
 // DownOptions controls teardown.
 type DownOptions struct {
-	Volumes       bool // -v: also remove the project's named volumes
-	RemoveOrphans bool // remove containers whose service is no longer in the file
+	Volumes       bool     // -v: also remove the project's named volumes
+	RemoveOrphans bool     // remove containers whose service is no longer in the file
+	Services      []string // only these services' containers; keeps network/volumes
+}
+
+// selected reports whether c belongs to one of services (all when empty).
+func selected(c backend.Container, services []string) bool {
+	return len(services) == 0 || slices.Contains(services, c.Labels[backend.LabelService])
 }
 
 // Down stops and removes this project's containers, then deletes the network.
@@ -137,12 +144,19 @@ func Down(ctx context.Context, p *types.Project, opts DownOptions) error {
 		return err
 	}
 	for _, c := range cs {
+		if !selected(c, opts.Services) {
+			continue
+		}
 		if _, defined := p.Services[c.Labels[backend.LabelService]]; !defined && !opts.RemoveOrphans {
 			fmt.Fprintf(backend.Stdout, "arboretum: warning: orphan container %s is not in the compose file; pass --remove-orphans to remove it\n", c.Name)
 			continue
 		}
 		_ = backend.Run(ctx, "stop", c.Name)
 		_ = backend.Run(ctx, "rm", c.Name)
+	}
+	if len(opts.Services) > 0 {
+		// Other services still use the network and volumes.
+		return nil
 	}
 	_ = backend.Run(ctx, "network", "delete", networkName(p))
 	if opts.Volumes {
@@ -224,35 +238,40 @@ func RunOneOff(ctx context.Context, p *types.Project, service string, opts RunOp
 	return backend.Run(ctx, args...)
 }
 
-// Stop stops this project's containers without removing them.
-func Stop(ctx context.Context, p *types.Project) error {
-	return forEachContainer(ctx, p, "stop")
+// Stop stops this project's containers (only those of services, when given)
+// without removing them.
+func Stop(ctx context.Context, p *types.Project, services []string) error {
+	return forEachContainer(ctx, p, "stop", services)
 }
 
-// Start (re)starts this project's existing containers.
-func Start(ctx context.Context, p *types.Project) error {
-	return forEachContainer(ctx, p, "start")
+// Start (re)starts this project's existing containers (only those of
+// services, when given).
+func Start(ctx context.Context, p *types.Project, services []string) error {
+	return forEachContainer(ctx, p, "start", services)
 }
 
 // Restart stops then starts this project's containers (`container` has no
 // `restart` subcommand).
-func Restart(ctx context.Context, p *types.Project) error {
-	if err := Stop(ctx, p); err != nil {
+func Restart(ctx context.Context, p *types.Project, services []string) error {
+	if err := Stop(ctx, p, services); err != nil {
 		return err
 	}
-	return Start(ctx, p)
+	return Start(ctx, p, services)
 }
 
 // forEachContainer runs a single `container <action> <name>` for every container
-// owned by the project, in a stable order.
-func forEachContainer(ctx context.Context, p *types.Project, action string) error {
+// owned by the project (restricted to services when non-empty), in a stable
+// order.
+func forEachContainer(ctx context.Context, p *types.Project, action string, services []string) error {
 	cs, err := backend.ListByProject(ctx, p.Name)
 	if err != nil {
 		return err
 	}
 	names := make([]string, 0, len(cs))
 	for _, c := range cs {
-		names = append(names, c.Name)
+		if selected(c, services) {
+			names = append(names, c.Name)
+		}
 	}
 	sort.Strings(names)
 	for _, name := range names {

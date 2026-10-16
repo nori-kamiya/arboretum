@@ -35,7 +35,7 @@ func TestUp_DryRun_EmitsExpectedCommands(t *testing.T) {
 		"container volume create --label arboretum.project=demo dbdata",
 		"--name db.demo --network demo_default --dns-domain demo",
 		"--memory 512m --cpus 1", // db limits (0.5 cpus rounds up to whole CPU)
-		"--memory 256m",            // redis limit
+		"--memory 256m",          // redis limit
 		"container build -t demo-api -f",
 		"examples/Dockerfile", // dockerfile joined with (compose-go's resolved, absolute) context dir
 		"--name api.demo --network demo_default --dns-domain demo",
@@ -144,6 +144,32 @@ func TestLifecycleCommands_DryRun(t *testing.T) {
 		code, _, errOut := runCLI(sub, "--dry-run", "-f", composeFile)
 		if code != 0 {
 			t.Fatalf("%s: exit %d, stderr=%s", sub, code, errOut)
+		}
+	}
+}
+
+// Given service args, up starts only those services plus their depends_on.
+func TestUp_GivenServices_WhenDryRun_ThenStartsOnlyThoseAndDependencies(t *testing.T) {
+	_, out, errOut := runCLI("up", "-d", "--dry-run", "-f", composeFile, "db")
+	if !strings.Contains(out, "--name db.demo ") || strings.Contains(out, "redis.demo") || strings.Contains(out, "api.demo") {
+		t.Fatalf("up db: out=%s stderr=%s", out, errOut)
+	}
+	_, out, _ = runCLI("up", "-d", "--dry-run", "-f", composeFile, "api")
+	mustContain(t, out, "--name db.demo ", "--name redis.demo ", "--name api.demo ")
+}
+
+func TestLogs_GivenService_WhenDryRun_ThenOnlyThatService(t *testing.T) {
+	_, out, _ := runCLI("logs", "--dry-run", "-f", composeFile, "db")
+	if strings.TrimSpace(out) != "container logs db.demo" {
+		t.Fatalf("logs db = %q", out)
+	}
+}
+
+func TestLifecycle_GivenUnknownService_ThenFails(t *testing.T) {
+	for _, sub := range []string{"up", "down", "logs", "stop", "start", "restart", "build", "pull"} {
+		code, _, errOut := runCLI(sub, "--dry-run", "-f", composeFile, "nosuch")
+		if code != 1 || !strings.Contains(errOut, "no such service: nosuch") {
+			t.Fatalf("%s nosuch: exit %d, stderr=%q", sub, code, errOut)
 		}
 	}
 }

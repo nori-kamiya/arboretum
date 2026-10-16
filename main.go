@@ -72,6 +72,17 @@ func newRootCmd(out io.Writer) *cobra.Command {
 		}
 		return compose.Load(ctx, files, projectName, profiles)
 	}
+	// loadServices narrows the project to the named services (all when none),
+	// enabling profile-gated ones like compose does; unknown names are an error.
+	loadServices := func(ctx context.Context, services []string, deps types.DependencyOption) (*types.Project, error) {
+		p, err := load(ctx)
+		if err == nil && len(services) > 0 {
+			if p, err = p.WithServicesEnabled(services...); err == nil {
+				p, err = p.WithSelectedServices(services, deps)
+			}
+		}
+		return p, err
+	}
 
 	root := &cobra.Command{
 		Use:           "arboretum",
@@ -87,12 +98,12 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	pf.BoolVar(&dryRun, "dry-run", false, "print the container commands instead of running them")
 
 	up := &cobra.Command{
-		Use:   "up",
-		Short: "Create and start services",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "up [SERVICE...]",
+		Short: "Create and start services (and their dependencies)",
+		RunE: func(cmd *cobra.Command, args []string) error {
 			detach, _ := cmd.Flags().GetBool("detach")
 			force, _ := cmd.Flags().GetBool("force-recreate")
-			p, err := load(cmd.Context())
+			p, err := loadServices(cmd.Context(), args, types.IncludeDependencies)
 			if err != nil {
 				return err
 			}
@@ -103,14 +114,14 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	up.Flags().Bool("force-recreate", false, "recreate containers even if their config is unchanged")
 
 	down := &cobra.Command{
-		Use:   "down",
+		Use:   "down [SERVICE...]",
 		Short: "Stop and remove containers and the network",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts := orch.DownOptions{}
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := orch.DownOptions{Services: args}
 			opts.Volumes, _ = cmd.Flags().GetBool("volumes")
 			opts.RemoveOrphans, _ = cmd.Flags().GetBool("remove-orphans")
 			prune, _ := cmd.Flags().GetBool("prune-builder")
-			p, err := load(cmd.Context())
+			p, err := loadServices(cmd.Context(), args, types.IgnoreDependencies)
 			if err != nil {
 				return err
 			}
@@ -141,24 +152,28 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	ps.Flags().BoolP("quiet", "q", false, "only display container names")
 	ps.Flags().String("format", "", "output format: table (default) or json")
 
-	mkLifecycle := func(use, short string, fn func(context.Context, *types.Project) error) *cobra.Command {
+	mkLifecycle := func(use, short string, fn func(context.Context, *types.Project, []string) error) *cobra.Command {
 		return &cobra.Command{
-			Use:   use,
+			Use:   use + " [SERVICE...]",
 			Short: short,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				p, err := load(cmd.Context())
+			RunE: func(cmd *cobra.Command, args []string) error {
+				p, err := loadServices(cmd.Context(), args, types.IgnoreDependencies)
 				if err != nil {
 					return err
 				}
-				return fn(cmd.Context(), p)
+				return fn(cmd.Context(), p, args)
 			},
 		}
+	}
+	// build/pull iterate p.Services, which loadServices already narrowed.
+	allOf := func(fn func(context.Context, *types.Project) error) func(context.Context, *types.Project, []string) error {
+		return func(ctx context.Context, p *types.Project, _ []string) error { return fn(ctx, p) }
 	}
 	stop := mkLifecycle("stop", "Stop containers without removing them", orch.Stop)
 	start := mkLifecycle("start", "Start existing containers", orch.Start)
 	restart := mkLifecycle("restart", "Restart containers", orch.Restart)
-	build := mkLifecycle("build", "Build images for services with a build section", orch.BuildAll)
-	pull := mkLifecycle("pull", "Pull images for services", orch.Pull)
+	build := mkLifecycle("build", "Build images for services with a build section", allOf(orch.BuildAll))
+	pull := mkLifecycle("pull", "Pull images for services", allOf(orch.Pull))
 
 	runCmd := &cobra.Command{
 		Use:   "run [flags] SERVICE [COMMAND [ARG...]]",
@@ -199,11 +214,11 @@ func newRootCmd(out io.Writer) *cobra.Command {
 	config.Flags().String("format", "", "output format: yaml (default) or json")
 
 	logs := &cobra.Command{
-		Use:   "logs",
+		Use:   "logs [SERVICE...]",
 		Short: "View output from containers",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			follow, _ := cmd.Flags().GetBool("follow")
-			p, err := load(cmd.Context())
+			p, err := loadServices(cmd.Context(), args, types.IgnoreDependencies)
 			if err != nil {
 				return err
 			}
