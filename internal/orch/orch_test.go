@@ -126,7 +126,7 @@ func TestHumanBytes(t *testing.T) {
 
 func TestImageRef(t *testing.T) {
 	p := &types.Project{Name: "demo"}
-	if got := imageRef(p, types.ServiceConfig{Image: "redis:7"}); got != "redis:7" {
+	if got := imageRef(p, types.ServiceConfig{ContainerSpec: types.ContainerSpec{Image: "redis:7"}}); got != "redis:7" {
 		t.Errorf("explicit image = %q", got)
 	}
 	if got := imageRef(p, types.ServiceConfig{Name: "api"}); got != "demo-api" {
@@ -144,13 +144,13 @@ func TestMemLimit(t *testing.T) {
 	if got := memLimit(types.ServiceConfig{Deploy: limitFor(512<<20, 0)}); got != "512m" {
 		t.Errorf("deploy limit = %q", got)
 	}
-	if got := memLimit(types.ServiceConfig{MemLimit: 256 << 20}); got != "256m" {
+	if got := memLimit(types.ServiceConfig{ContainerSpec: types.ContainerSpec{MemLimit: 256 << 20}}); got != "256m" {
 		t.Errorf("legacy mem_limit = %q", got)
 	}
 	if got := memLimit(types.ServiceConfig{Deploy: reservationFor(128<<20, 0)}); got != "128m" {
 		t.Errorf("reservations.memory fallback = %q", got)
 	}
-	if got := memLimit(types.ServiceConfig{MemReservation: 64 << 20}); got != "64m" {
+	if got := memLimit(types.ServiceConfig{ContainerSpec: types.ContainerSpec{MemReservation: 64 << 20}}); got != "64m" {
 		t.Errorf("mem_reservation fallback = %q", got)
 	}
 	if got := memLimit(types.ServiceConfig{}); got != "" {
@@ -166,7 +166,7 @@ func TestCPULimit(t *testing.T) {
 			t.Errorf("cpuLimit(%v) = %q, want %q", in, got, want)
 		}
 	}
-	if got := cpuLimit(types.ServiceConfig{CPUS: 0.5}); got != "1" { // legacy top-level cpus
+	if got := cpuLimit(types.ServiceConfig{ContainerSpec: types.ContainerSpec{CPUS: 0.5}}); got != "1" { // legacy top-level cpus
 		t.Errorf("legacy cpus = %q", got)
 	}
 	if got := cpuLimit(types.ServiceConfig{Deploy: reservationFor(0, 2)}); got != "2" {
@@ -191,22 +191,26 @@ func TestLimits_NilDeploy(t *testing.T) {
 func TestRunArgs_FullService(t *testing.T) {
 	p := &types.Project{Name: "demo"}
 	svc := types.ServiceConfig{
-		Name:  "api",
-		Image: "myapi:latest",
-		Environment: types.MappingWithEquals{
-			"A": ptr("1"),
-			"B": nil, // pass-through (no value)
+		Name:   "api",
+		Deploy: limitFor(512<<20, 1),
+		ContainerSpec: types.ContainerSpec{
+			Image: "myapi:latest",
+			Environment: types.MappingWithEquals{
+				"A": ptr("1"),
+				"B": nil, // pass-through (no value)
+			},
+			Volumes: []types.ServiceVolumeConfig{
+				{Source: "data", Target: "/data"},
+				{Source: "", Target: "/x"}, // skipped
+			},
+			Command: types.ShellCommand{"node", "server.js"},
 		},
-		Ports: []types.ServicePortConfig{
-			{Target: 3000, Published: "8080"},
-			{Target: 9000, Published: ""}, // skipped
+		WorkloadSpec: types.WorkloadSpec{
+			Ports: []types.ServicePortConfig{
+				{Target: 3000, Published: "8080"},
+				{Target: 9000, Published: ""}, // skipped
+			},
 		},
-		Volumes: []types.ServiceVolumeConfig{
-			{Source: "data", Target: "/data"},
-			{Source: "", Target: "/x"}, // skipped
-		},
-		Command: types.ShellCommand{"node", "server.js"},
-		Deploy:  limitFor(512<<20, 1),
 	}
 	got := strings.Join(runArgs(p, svc), " ")
 	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
@@ -222,13 +226,15 @@ func TestRunArgs_FullService(t *testing.T) {
 func TestRunArgs_WorkdirUserEntrypointLabels(t *testing.T) {
 	p := &types.Project{Name: "demo"}
 	svc := types.ServiceConfig{
-		Name:       "api",
-		Image:      "myapi:latest",
-		WorkingDir: "/srv",
-		User:       "node",
-		Entrypoint: types.ShellCommand{"./entry.sh", "--flag", "x"},
-		Labels:     types.Labels{"com.example.tier": "web", "com.example.team": "core"},
-		Command:    types.ShellCommand{"start"},
+		Name: "api",
+		ContainerSpec: types.ContainerSpec{
+			Image:      "myapi:latest",
+			WorkingDir: "/srv",
+			User:       "node",
+			Entrypoint: types.ShellCommand{"./entry.sh", "--flag", "x"},
+			Labels:     types.Labels{"com.example.tier": "web", "com.example.team": "core"},
+			Command:    types.ShellCommand{"start"},
+		},
 	}
 	got := strings.Join(runArgs(p, svc), " ")
 	want := "run --detach --name api.demo --network demo_default --dns-domain demo " +
@@ -273,10 +279,15 @@ func TestWarnUnsupported(t *testing.T) {
 		Secrets: types.Secrets{"s": {}},
 		Configs: types.Configs{"c": {}},
 		Services: types.Services{
-			"plain": {Name: "plain", Networks: map[string]*types.ServiceNetworkConfig{"default": nil}},
-			"multi": {Name: "multi", Networks: map[string]*types.ServiceNetworkConfig{"frontend": nil}},
-			"scaled": {Name: "scaled", Networks: map[string]*types.ServiceNetworkConfig{"default": nil},
-				Deploy: &types.DeployConfig{Replicas: &reps}},
+			"plain": {Name: "plain", ContainerSpec: types.ContainerSpec{Networks: map[string]*types.ServiceNetworkConfig{"default": nil}}},
+			"multi": {Name: "multi", ContainerSpec: types.ContainerSpec{Networks: map[string]*types.ServiceNetworkConfig{"frontend": nil}}},
+			"scaled": {
+				Name:   "scaled",
+				Deploy: &types.DeployConfig{Replicas: &reps},
+				ContainerSpec: types.ContainerSpec{
+					Networks: map[string]*types.ServiceNetworkConfig{"default": nil},
+				},
+			},
 		},
 	}
 	warnUnsupported(p)
@@ -378,7 +389,7 @@ func TestUp_WarnsOnUnsupportedRestart(t *testing.T) {
 	backend.DryRun, backend.Stdout = true, &buf
 	t.Cleanup(func() { backend.DryRun, backend.Stdout = false, os.Stdout })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"web": {Name: "web", Image: "nginx", Restart: "always"},
+		"web": {Name: "web", Restart: "always", ContainerSpec: types.ContainerSpec{Image: "nginx"}},
 	}}
 	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
@@ -392,22 +403,26 @@ func TestUp_WarnsOnUnsupportedRestart(t *testing.T) {
 
 func hcService(name string, test types.HealthCheckTest, retries uint64) types.ServiceConfig {
 	return types.ServiceConfig{
-		Name:        name,
-		Image:       "img",
-		HealthCheck: &types.HealthCheckConfig{Test: test, Retries: &retries},
+		Name: name,
+		ContainerSpec: types.ContainerSpec{
+			Image: "img",
+		},
+		WorkloadSpec: types.WorkloadSpec{
+			HealthCheck: &types.HealthCheckConfig{Test: test, Retries: &retries},
+		},
 	}
 }
 
 func TestHealthTest_Forms(t *testing.T) {
-	cmd, shell, ok := healthTest(types.ServiceConfig{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready", "-q"}}})
+	cmd, shell, ok := healthTest(types.ServiceConfig{WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready", "-q"}}}})
 	if !ok || shell || strings.Join(cmd, " ") != "pg_isready -q" {
 		t.Fatalf("CMD: %v %v %v", cmd, shell, ok)
 	}
-	cmd, shell, ok = healthTest(types.ServiceConfig{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD-SHELL", "curl -f localhost"}}})
+	cmd, shell, ok = healthTest(types.ServiceConfig{WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD-SHELL", "curl -f localhost"}}}})
 	if !ok || !shell || cmd[0] != "curl -f localhost" {
 		t.Fatalf("CMD-SHELL: %v %v %v", cmd, shell, ok)
 	}
-	cmd, shell, ok = healthTest(types.ServiceConfig{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"echo", "hi"}}})
+	cmd, shell, ok = healthTest(types.ServiceConfig{WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"echo", "hi"}}}})
 	if !ok || !shell || cmd[0] != "echo hi" {
 		t.Fatalf("legacy: %v %v %v", cmd, shell, ok)
 	}
@@ -417,7 +432,7 @@ func TestHealthTest_Forms(t *testing.T) {
 		{Test: types.HealthCheckTest{}},
 		{Test: types.HealthCheckTest{"NONE"}},
 	} {
-		if _, _, ok := healthTest(types.ServiceConfig{HealthCheck: bad}); ok {
+		if _, _, ok := healthTest(types.ServiceConfig{WorkloadSpec: types.WorkloadSpec{HealthCheck: bad}}); ok {
 			t.Fatalf("expected unusable for %+v", bad)
 		}
 	}
@@ -447,7 +462,7 @@ func TestWaitHealthy_BecomesHealthyAfterRetries(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 	sp := types.Duration(time.Second)
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"db": {Name: "db", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "ok"}, StartPeriod: &sp}},
+		"db": {Name: "db", WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "ok"}, StartPeriod: &sp}}},
 	}}
 	if err := waitHealthy(context.Background(), p, "db"); err != nil {
 		t.Fatalf("expected healthy, got %v", err)
@@ -482,7 +497,7 @@ func TestWaitHealthy_ShellForm(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"db": {Name: "db", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD-SHELL", "curl -f localhost"}}},
+		"db": {Name: "db", WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD-SHELL", "curl -f localhost"}}}},
 	}}
 	if err := waitHealthy(context.Background(), p, "db"); err != nil {
 		t.Fatal(err)
@@ -508,8 +523,8 @@ func TestUp_HealthyDependencyNeverReady(t *testing.T) {
 	t.Cleanup(func() { backend.DryRun = false })
 	retries := uint64(1)
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"db":  {Name: "db", Image: "postgres", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}, Retries: &retries}},
-		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}},
+		"db":  {Name: "db", ContainerSpec: types.ContainerSpec{Image: "postgres"}, WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}, Retries: &retries}}},
+		"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}, WorkloadSpec: types.WorkloadSpec{DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}}},
 	}}
 	if err := Up(context.Background(), p, true, false); err == nil {
 		t.Fatal("expected Up to fail when dependency never becomes healthy")
@@ -530,8 +545,8 @@ func TestUp_StartedConditionSkipsHealthWait(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"db":  {Name: "db", Image: "postgres"},
-		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionStarted}}},
+		"db":  {Name: "db", ContainerSpec: types.ContainerSpec{Image: "postgres"}},
+		"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}, WorkloadSpec: types.WorkloadSpec{DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionStarted}}}},
 	}}
 	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
@@ -576,8 +591,8 @@ func TestUp_WaitsForHealthyDependency(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"db":  {Name: "db", Image: "postgres", HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}}},
-		"web": {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}},
+		"db":  {Name: "db", ContainerSpec: types.ContainerSpec{Image: "postgres"}, WorkloadSpec: types.WorkloadSpec{HealthCheck: &types.HealthCheckConfig{Test: types.HealthCheckTest{"CMD", "pg_isready"}}}},
+		"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}, WorkloadSpec: types.WorkloadSpec{DependsOn: types.DependsOnConfig{"db": {Condition: types.ServiceConditionHealthy}}}},
 	}}
 	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
@@ -654,8 +669,8 @@ func dep(names ...string) types.DependsOnConfig {
 
 func TestTopoSort_DependencyOrder(t *testing.T) {
 	p := &types.Project{Name: "p", Services: types.Services{
-		"a": {Name: "a", DependsOn: dep("b")},
-		"b": {Name: "b", DependsOn: dep("c")},
+		"a": {Name: "a", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("b")}},
+		"b": {Name: "b", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("c")}},
 		"c": {Name: "c"},
 	}}
 	order, err := topoSort(p)
@@ -679,7 +694,7 @@ func TestTopoSort_IndependentIsAlphabetical(t *testing.T) {
 
 func TestTopoSort_UnknownDependencyIgnored(t *testing.T) {
 	p := &types.Project{Name: "p", Services: types.Services{
-		"a": {Name: "a", DependsOn: dep("ghost")},
+		"a": {Name: "a", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("ghost")}},
 	}}
 	order, err := topoSort(p)
 	if err != nil || strings.Join(order, ",") != "a" {
@@ -689,8 +704,8 @@ func TestTopoSort_UnknownDependencyIgnored(t *testing.T) {
 
 func TestTopoSort_CycleError(t *testing.T) {
 	p := &types.Project{Name: "p", Services: types.Services{
-		"a": {Name: "a", DependsOn: dep("b")},
-		"b": {Name: "b", DependsOn: dep("a")},
+		"a": {Name: "a", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("b")}},
+		"b": {Name: "b", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("a")}},
 	}}
 	if _, err := topoSort(p); err == nil {
 		t.Fatal("expected cycle error")
@@ -701,7 +716,7 @@ func TestTopoSort_CycleError(t *testing.T) {
 
 func TestBuild_WithDockerfileAndContext(t *testing.T) {
 	p := &types.Project{Name: "demo"}
-	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{Context: "./app", Dockerfile: "Dockerfile.dev"}}
+	svc := types.ServiceConfig{Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{Context: "./app", Dockerfile: "Dockerfile.dev"}}}
 	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
 	// container build's -f resolves relative to the CWD, not the context-dir
 	// positional arg, so the compose-relative-to-context dockerfile path must
@@ -713,7 +728,7 @@ func TestBuild_WithDockerfileAndContext(t *testing.T) {
 
 func TestBuild_AbsoluteDockerfileIsNotJoinedWithContext(t *testing.T) {
 	p := &types.Project{Name: "demo"}
-	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{Context: "./app", Dockerfile: "/abs/Dockerfile.dev"}}
+	svc := types.ServiceConfig{Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{Context: "./app", Dockerfile: "/abs/Dockerfile.dev"}}}
 	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
 	if strings.TrimSpace(out) != "container build -t demo-api -f /abs/Dockerfile.dev ./app" {
 		t.Fatalf("build cmd = %q", out)
@@ -723,11 +738,16 @@ func TestBuild_AbsoluteDockerfileIsNotJoinedWithContext(t *testing.T) {
 func TestBuild_ArgsTargetLabels(t *testing.T) {
 	p := &types.Project{Name: "demo"}
 	v := "1.21"
-	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{
-		Context: ".", Target: "runtime",
-		Args:   types.MappingWithEquals{"GO_VERSION": &v, "FROM_ENV": nil},
-		Labels: types.Labels{"tier": "api"},
-	}}
+	svc := types.ServiceConfig{
+		Name: "api",
+		WorkloadSpec: types.WorkloadSpec{
+			Build: &types.BuildConfig{
+				Context: ".", Target: "runtime",
+				Args:   types.MappingWithEquals{"GO_VERSION": &v, "FROM_ENV": nil},
+				Labels: types.Labels{"tier": "api"},
+			},
+		},
+	}
 	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
 	want := "container build -t demo-api --target runtime --build-arg FROM_ENV --build-arg GO_VERSION=1.21 --label tier=api ."
 	if strings.TrimSpace(out) != want {
@@ -737,7 +757,7 @@ func TestBuild_ArgsTargetLabels(t *testing.T) {
 
 func TestBuild_DefaultContextNoDockerfile(t *testing.T) {
 	p := &types.Project{Name: "demo"}
-	svc := types.ServiceConfig{Name: "api", Build: &types.BuildConfig{}}
+	svc := types.ServiceConfig{Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{}}}
 	out := captureDryRun(t, func() error { return build(context.Background(), p, svc) })
 	if strings.TrimSpace(out) != "container build -t demo-api ." {
 		t.Fatalf("build cmd = %q", out)
@@ -749,8 +769,8 @@ func TestBuild_DefaultContextNoDockerfile(t *testing.T) {
 func demoProject() *types.Project {
 	return &types.Project{Name: "demo",
 		Services: types.Services{
-			"api": {Name: "api", Build: &types.BuildConfig{Context: ".", Dockerfile: "Dockerfile"}, DependsOn: dep("db")},
-			"db":  {Name: "db", Image: "postgres:16", Deploy: limitFor(512<<20, 0)},
+			"api": {Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{Context: ".", Dockerfile: "Dockerfile"}, DependsOn: dep("db")}},
+			"db":  {Name: "db", Deploy: limitFor(512<<20, 0), ContainerSpec: types.ContainerSpec{Image: "postgres:16"}},
 		},
 		Volumes: types.Volumes{"dbdata": {}},
 	}
@@ -959,8 +979,8 @@ func TestUp_ListExistingErrorPropagates(t *testing.T) {
 func TestUp_TopoErrorPropagates(t *testing.T) {
 	failOn(t, "") // no command failure; cycle should surface first
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"a": {Name: "a", DependsOn: dep("b")},
-		"b": {Name: "b", DependsOn: dep("a")},
+		"a": {Name: "a", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("b")}},
+		"b": {Name: "b", WorkloadSpec: types.WorkloadSpec{DependsOn: dep("a")}},
 	}}
 	if err := Up(context.Background(), p, true, false); err == nil {
 		t.Fatal("expected topo cycle error")
@@ -1063,7 +1083,7 @@ func TestPs_TableWithPorts(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"web": {Name: "web", Ports: []types.ServicePortConfig{{Published: "8080", Target: 3000}}},
+		"web": {Name: "web", WorkloadSpec: types.WorkloadSpec{Ports: []types.ServicePortConfig{{Published: "8080", Target: 3000}}}},
 	}}
 	var buf bytes.Buffer
 	if err := Ps(context.Background(), p, &buf, PsOptions{}); err != nil {
@@ -1102,7 +1122,7 @@ func TestPs_QuietAndJSON(t *testing.T) {
 
 func TestPortsFor(t *testing.T) {
 	p := &types.Project{Services: types.Services{
-		"web": {Ports: []types.ServicePortConfig{{Published: "8080", Target: 3000}, {Target: 9000}}},
+		"web": {WorkloadSpec: types.WorkloadSpec{Ports: []types.ServicePortConfig{{Published: "8080", Target: 3000}, {Target: 9000}}}},
 	}}
 	if got := portsFor(p, "web"); got != "8080->3000" { // unpublished port skipped
 		t.Fatalf("ports = %q", got)
@@ -1250,8 +1270,8 @@ func TestBuildAll(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"api": {Name: "api", Build: &types.BuildConfig{Context: "."}},
-		"db":  {Name: "db", Image: "postgres"}, // no build → skipped
+		"api": {Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{Context: "."}}},
+		"db":  {Name: "db", ContainerSpec: types.ContainerSpec{Image: "postgres"}}, // no build → skipped
 	}}
 	if err := BuildAll(context.Background(), p); err != nil {
 		t.Fatal(err)
@@ -1267,7 +1287,7 @@ func TestBuildAll_Error(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	p := &types.Project{Name: "demo", Services: types.Services{"api": {Name: "api", Build: &types.BuildConfig{Context: "."}}}}
+	p := &types.Project{Name: "demo", Services: types.Services{"api": {Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{Context: "."}}}}}
 	if err := BuildAll(context.Background(), p); err == nil {
 		t.Fatal("expected build error")
 	}
@@ -1284,8 +1304,8 @@ func TestPull(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"db":  {Name: "db", Image: "postgres:16"},
-		"api": {Name: "api", Build: &types.BuildConfig{Context: "."}}, // no image → skipped
+		"db":  {Name: "db", ContainerSpec: types.ContainerSpec{Image: "postgres:16"}},
+		"api": {Name: "api", WorkloadSpec: types.WorkloadSpec{Build: &types.BuildConfig{Context: "."}}}, // no image → skipped
 	}}
 	if err := Pull(context.Background(), p); err != nil {
 		t.Fatal(err)
@@ -1301,7 +1321,7 @@ func TestPull_Error(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db", Image: "x"}}}
+	p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db", ContainerSpec: types.ContainerSpec{Image: "x"}}}}
 	if err := Pull(context.Background(), p); err == nil {
 		t.Fatal("expected pull error")
 	}
@@ -1310,7 +1330,7 @@ func TestPull_Error(t *testing.T) {
 func TestRunOneOff(t *testing.T) {
 	v := "1"
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"web": {Name: "web", Image: "nginx", Environment: types.MappingWithEquals{"A": &v, "NOVAL": nil}},
+		"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx", Environment: types.MappingWithEquals{"A": &v, "NOVAL": nil}}},
 	}}
 	out := captureDryRun(t, func() error {
 		return RunOneOff(context.Background(), p, "web", RunOptions{Env: []string{"B=2"}}, "sh", "-c", "echo hi")
@@ -1339,7 +1359,7 @@ func TestRunOneOff_NetworkError(t *testing.T) {
 	}))
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
-	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", Image: "nginx"}}}
+	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}}}}
 	if err := RunOneOff(context.Background(), p, "web", RunOptions{}); err == nil {
 		t.Fatal("expected network error")
 	}
@@ -1403,8 +1423,8 @@ func TestUp_WaitsForCompletedDependency(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"migrate": {Name: "migrate", Image: "migrate"},
-		"web":     {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"migrate": {Condition: types.ServiceConditionCompletedSuccessfully}}},
+		"migrate": {Name: "migrate", ContainerSpec: types.ContainerSpec{Image: "migrate"}},
+		"web":     {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}, WorkloadSpec: types.WorkloadSpec{DependsOn: types.DependsOnConfig{"migrate": {Condition: types.ServiceConditionCompletedSuccessfully}}}},
 	}}
 	if err := Up(context.Background(), p, true, false); err != nil {
 		t.Fatal(err)
@@ -1429,8 +1449,8 @@ func TestUp_CompletedDependencyError(t *testing.T) {
 	backend.DryRun = false
 	t.Cleanup(func() { backend.DryRun = false })
 	p := &types.Project{Name: "demo", Services: types.Services{
-		"migrate": {Name: "migrate", Image: "migrate"},
-		"web":     {Name: "web", Image: "nginx", DependsOn: types.DependsOnConfig{"migrate": {Condition: types.ServiceConditionCompletedSuccessfully}}},
+		"migrate": {Name: "migrate", ContainerSpec: types.ContainerSpec{Image: "migrate"}},
+		"web":     {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}, WorkloadSpec: types.WorkloadSpec{DependsOn: types.DependsOnConfig{"migrate": {Condition: types.ServiceConditionCompletedSuccessfully}}}},
 	}}
 	if err := Up(context.Background(), p, true, false); err == nil {
 		t.Fatal("expected completed-dependency error")
@@ -1440,7 +1460,7 @@ func TestUp_CompletedDependencyError(t *testing.T) {
 // --- config ----------------------------------------------------------------
 
 func TestConfig(t *testing.T) {
-	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", Image: "nginx"}}}
+	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}}}}
 
 	var buf bytes.Buffer
 	if err := Config(p, &buf, ConfigOptions{}); err != nil {
@@ -1477,7 +1497,7 @@ func TestConfig_MarshalError(t *testing.T) {
 }
 
 func TestConfig_WriteError(t *testing.T) {
-	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", Image: "nginx"}}}
+	p := &types.Project{Name: "demo", Services: types.Services{"web": {Name: "web", ContainerSpec: types.ContainerSpec{Image: "nginx"}}}}
 	if err := Config(p, errWriter{}, ConfigOptions{}); err == nil {
 		t.Fatal("expected write error")
 	}
