@@ -248,7 +248,8 @@ Apple `container` 1.0.0 / macOS 26 (arm64) でエンドツーエンド検証済�
   `environment`；`ports`（公開ポート）；`volumes`（named + bind）；`depends_on`
   （起動順 + `service_healthy` + `service_completed_successfully`）；CPU/メモリ
   （`deploy.resources.limits` → `mem_limit`/`cpus` → `reservations`）；
-  `working_dir`・`user`・`entrypoint`・サービス `labels`。
+  `working_dir`・`user`・`entrypoint`・サービス `labels`；`stop_grace_period`
+  （→ `container stop --time`。秒単位に切り上げ）。
 - **挙動**: config-hash による自動再作成つき冪等 `up`；プロジェクト単位ネットワーク；
   サービス名 DNS；プロジェクト間の名前分離；色付き並行ログと Ctrl-C 一括停止。
 

@@ -256,7 +256,8 @@ Verified end-to-end against Apple `container` 1.0.0 on macOS 26 (arm64).
   `environment`; `ports` (published); `volumes` (named + bind); `depends_on`
   (start order + `service_healthy` + `service_completed_successfully`);
   CPU/memory (`deploy.resources.limits` → `mem_limit`/`cpus` → `reservations`);
-  `working_dir`, `user`, `entrypoint`, service `labels`.
+  `working_dir`, `user`, `entrypoint`, service `labels`; `stop_grace_period`
+  (→ `container stop --time`, rounded up to whole seconds).
 - **Behavior**: idempotent `up` with config-hash auto-recreate; per-project
   network; service-name DNS; cross-project name isolation; concurrent colored
   logs with Ctrl-C teardown.

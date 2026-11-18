@@ -1530,3 +1530,139 @@ func TestLogs_ErrorPropagates(t *testing.T) {
 		t.Fatal("expected logs error")
 	}
 }
+
+// --- stop_grace_period -----------------------------------------------------
+
+func grace(d time.Duration) *types.Duration {
+	g := types.Duration(d)
+	return &g
+}
+
+func TestStopArgs_StopGracePeriod(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		service string
+		grace   *types.Duration
+		want    string
+	}{
+		{"unset keeps the runtime default", "db", nil, "stop db.demo"},
+		{"whole seconds", "db", grace(30 * time.Second), "stop --time 30 db.demo"},
+		{"minutes", "db", grace(90 * time.Second), "stop --time 90 db.demo"},
+		{"fractional rounds up", "db", grace(1500 * time.Millisecond), "stop --time 2 db.demo"},
+		{"sub-second rounds up to 1", "db", grace(200 * time.Millisecond), "stop --time 1 db.demo"},
+		{"zero is clamped to 1", "db", grace(0), "stop --time 1 db.demo"},
+		{"unknown service (orphan) keeps the runtime default", "ghost", grace(30 * time.Second), "stop db.demo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &types.Project{Name: "demo", Services: types.Services{"db": {Name: "db", ContainerSpec: types.ContainerSpec{StopGracePeriod: tc.grace}}}}
+			if got := strings.Join(stopArgs(p, tc.service, "db.demo"), " "); got != tc.want {
+				t.Fatalf("stopArgs = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUp_RecreateHonorsStopGracePeriod(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		grace *types.Duration
+		want  string
+	}{
+		{"without stop_grace_period", nil, "stop db.demo"},
+		{"with stop_grace_period", grace(1500 * time.Millisecond), "stop --time 2 db.demo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := demoProject()
+			db := p.Services["db"]
+			db.StopGracePeriod = tc.grace
+			p.Services["db"] = db
+			var stops []string
+			t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+				cmd := strings.Join(args, " ")
+				switch {
+				case strings.HasPrefix(cmd, "ls --all"):
+					return []byte(`[{"id":"db.demo","status":{"state":"running"},"configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db","arboretum.config-hash":"stale"}}}]`), nil
+				case strings.HasPrefix(cmd, "network list"):
+					return []byte("[]"), nil
+				case strings.HasPrefix(cmd, "stop "):
+					stops = append(stops, cmd)
+				}
+				return nil, nil
+			}))
+			backend.DryRun = false
+			t.Cleanup(func() { backend.DryRun = false })
+
+			if err := Up(context.Background(), p, true, false); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(stops, "|") != tc.want {
+				t.Fatalf("stops = %v, want %q", stops, tc.want)
+			}
+		})
+	}
+}
+
+func TestDown_HonorsStopGracePeriod(t *testing.T) {
+	lsJSON := `[
+		{"id":"db.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"db"}}},
+		{"id":"web.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"web"}}},
+		{"id":"ghost.demo","configuration":{"labels":{"arboretum.project":"demo","arboretum.service":"ghost"}}}
+	]`
+	var stops []string
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "ls --all") {
+			return []byte(lsJSON), nil
+		}
+		if strings.HasPrefix(cmd, "stop ") {
+			stops = append(stops, cmd)
+		}
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"db":  {Name: "db", ContainerSpec: types.ContainerSpec{StopGracePeriod: grace(30 * time.Second)}},
+		"web": {Name: "web"},
+	}}
+	if err := Down(context.Background(), p, DownOptions{RemoveOrphans: true}); err != nil {
+		t.Fatal(err)
+	}
+	want := "stop --time 30 db.demo|stop web.demo|stop ghost.demo"
+	if strings.Join(stops, "|") != want {
+		t.Fatalf("stops = %v, want %q", stops, want)
+	}
+}
+
+func TestStopRestart_HonorStopGracePeriod(t *testing.T) {
+	var actions []string
+	t.Cleanup(backend.SetExecForTest(func(_ context.Context, _ bool, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if strings.HasPrefix(cmd, "ls --all") {
+			return []byte(twoContainers), nil
+		}
+		actions = append(actions, cmd)
+		return nil, nil
+	}))
+	backend.DryRun = false
+	t.Cleanup(func() { backend.DryRun = false })
+	p := &types.Project{Name: "demo", Services: types.Services{
+		"a": {Name: "a", ContainerSpec: types.ContainerSpec{StopGracePeriod: grace(200 * time.Millisecond)}},
+		"b": {Name: "b"},
+	}}
+
+	if err := Stop(context.Background(), p, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(actions, "|"); got != "stop --time 1 a.demo|stop b.demo" {
+		t.Fatalf("stop actions = %q", got)
+	}
+	actions = nil
+	if err := Restart(context.Background(), p, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(actions, "|"); got != "stop --time 1 a.demo|stop b.demo|start a.demo|start b.demo" {
+		t.Fatalf("restart actions = %q", got)
+	}
+}
