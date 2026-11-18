@@ -34,7 +34,9 @@ sizes per service and frees memory on stop. See `README.md` for the pitch.
   reservations`/`mem_reservation`; unset → `container`'s own defaults. (`--cpus`
   is whole-CPU only, so fractional values round up.) Plus `working_dir`
   → `--workdir`, `user` → `--user`, user `labels` → `--label`, and
-  `entrypoint` (`[0]` → `--entrypoint`, rest prepended to the command).
+  `entrypoint` (`[0]` → `--entrypoint`, rest prepended to the command), and
+  `stop_grace_period` → `container stop --time` on up-recreate/down/stop/restart
+  (whole seconds, rounded up, minimum 1; unset keeps the runtime's 5 s default).
 - **Preflight**: real (non-dry-run) commands check `container` is on PATH first
   (`backend.EnsureInstalled`) and, when missing, fail fast with a
   `*NotInstalledError` that walks the user through installing the runtime.

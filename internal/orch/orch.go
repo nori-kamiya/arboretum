@@ -74,7 +74,7 @@ func Up(ctx context.Context, p *types.Project, detach, forceRecreate bool) error
 				continue
 			}
 			// Config changed (or forced): drop the old container, recreate below.
-			_ = backend.Run(ctx, "stop", cname)
+			_ = backend.Run(ctx, stopArgs(p, name, cname)...)
 			_ = backend.Run(ctx, "rm", cname)
 			recreated = true
 		}
@@ -151,7 +151,7 @@ func Down(ctx context.Context, p *types.Project, opts DownOptions) error {
 			fmt.Fprintf(backend.Stdout, "arboretum: warning: orphan container %s is not in the compose file; pass --remove-orphans to remove it\n", c.Name)
 			continue
 		}
-		_ = backend.Run(ctx, "stop", c.Name)
+		_ = backend.Run(ctx, stopArgs(p, c.Labels[backend.LabelService], c.Name)...)
 		_ = backend.Run(ctx, "rm", c.Name)
 	}
 	if len(opts.Services) > 0 {
@@ -267,19 +267,36 @@ func forEachContainer(ctx context.Context, p *types.Project, action string, serv
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0, len(cs))
+	targets := make([]backend.Container, 0, len(cs))
 	for _, c := range cs {
 		if selected(c, services) {
-			names = append(names, c.Name)
+			targets = append(targets, c)
 		}
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		if err := backend.Run(ctx, action, name); err != nil {
-			return fmt.Errorf("%s %s: %w", action, name, err)
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	for _, c := range targets {
+		args := []string{action, c.Name}
+		if action == "stop" {
+			args = stopArgs(p, c.Labels[backend.LabelService], c.Name)
+		}
+		if err := backend.Run(ctx, args...); err != nil {
+			return fmt.Errorf("%s %s: %w", action, c.Name, err)
 		}
 	}
 	return nil
+}
+
+// stopArgs is the `container stop` argv for a service's container.
+// --time takes whole seconds; round stop_grace_period up (minimum 1) rather
+// than truncate, since stopping a stateful service early corrupts its data.
+// Orphans (unknown service) keep the runtime default.
+func stopArgs(p *types.Project, service, name string) []string {
+	svc, ok := p.Services[service]
+	if !ok || svc.StopGracePeriod == nil {
+		return []string{"stop", name}
+	}
+	secs := max((time.Duration(*svc.StopGracePeriod)+time.Second-1)/time.Second, 1)
+	return []string{"stop", "--time", strconv.FormatInt(int64(secs), 10), name}
 }
 
 // PsOptions controls ps output.
